@@ -3,14 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node --env-file=.env --import tsx --watch src/index.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@goatech/shared": "workspace:*",
     "@supabase/supabase-js": "^2.49.1",
+    "pdf-parse": "^1.1.1",
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/node": "^22.13.1"
+    "@types/node": "^22.13.1",
+    "@types/pdf-parse": "^1.1.4",
+    "tsx": "^4.19.3"
   }
 }
