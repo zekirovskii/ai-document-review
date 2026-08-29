@@ -2,7 +2,7 @@ create function public.claim_next_processing_job(p_claimed_by text)
 returns public.processing_jobs
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = ''
 as $$
 declare
   claimed_job public.processing_jobs;
@@ -14,13 +14,13 @@ begin
   select job.*
   into claimed_job
   from public.processing_jobs as job
-  join public.documents as document
-    on document.id = job.document_id
-    and document.organization_id = job.organization_id
+  join public.documents as doc
+    on doc.id = job.document_id
+    and doc.organization_id = job.organization_id
   where job.status = 'QUEUED'
-    and document.status = 'QUEUED'
+    and doc.status = 'QUEUED'
   order by job.created_at
-  for update of job, document skip locked
+  for update of job, doc skip locked
   limit 1;
 
   if not found then
