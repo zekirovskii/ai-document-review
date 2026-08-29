@@ -1,0 +1,26 @@
+{
+  "name": "goatech-ai-document-review",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "corepack pnpm --recursive --if-present run dev",
+    "build": "corepack pnpm --recursive --if-present run build",
+    "test": "corepack pnpm --recursive --if-present run test",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "corepack pnpm --recursive --if-present run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.1",
+    "prettier": "^3.5.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^3.0.5"
+  }
+}
