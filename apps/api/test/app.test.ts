@@ -17,6 +17,7 @@ const createDependencies = (): ApiDependencies => ({
   },
   uploadService: { upload: vi.fn(async () => {}), remove: vi.fn(async () => {}), createQueued: vi.fn(async () => { throw new Error('not configured'); }) },
   maxPdfSizeBytes: 1024,
+  corsOrigin: 'http://localhost:3000',
 });
 
 describe('API foundation', () => {
@@ -24,6 +25,15 @@ describe('API foundation', () => {
     const response = await request(createApp(createDependencies())).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'ok' });
+  });
+
+  it('allows the configured web origin to preflight document uploads', async () => {
+    const response = await request(createApp(createDependencies()))
+      .options('/documents')
+      .set('Origin', 'http://localhost:3000')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(response.status).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe('http://localhost:3000');
   });
 
   it('rejects a protected endpoint without a token', async () => {

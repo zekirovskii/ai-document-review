@@ -14,6 +14,7 @@ const app = createApp({
   documentsService: createDocumentsService(supabase),
   uploadService: createUploadService(supabase),
   maxPdfSizeBytes: config.maxPdfSizeBytes,
+  corsOrigin: config.corsOrigin,
 });
 
 app.listen(config.port, () => {

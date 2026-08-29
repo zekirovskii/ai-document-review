@@ -3,6 +3,7 @@ export interface ApiConfig {
   supabaseUrl: string;
   supabaseServiceRoleKey: string;
   maxPdfSizeBytes: number;
+  corsOrigin: string;
 }
 
 const required = (environment: NodeJS.ProcessEnv, key: string): string => {
@@ -26,5 +27,6 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
     supabaseUrl: required(environment, 'SUPABASE_URL'),
     supabaseServiceRoleKey: required(environment, 'SUPABASE_SERVICE_ROLE_KEY'),
     maxPdfSizeBytes,
+    corsOrigin: environment.CORS_ORIGIN ?? 'http://localhost:3000',
   };
 };

@@ -1,4 +1,5 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import cors from 'cors';
 import multer from 'multer';
 
 import { ApiError, errorHandler, notFound } from './errors.js';
@@ -13,12 +14,14 @@ export interface ApiDependencies {
   documentsService: DocumentsService;
   uploadService: UploadService;
   maxPdfSizeBytes: number;
+  corsOrigin: string;
 }
 
 type ContextResponse = Response<unknown, RequestContext>;
 
 export const createApp = (dependencies: ApiDependencies): Express => {
   const app = express();
+  app.use(cors({ origin: dependencies.corsOrigin }));
   app.use(express.json());
 
   app.get('/health', (_request, response) => response.json({ status: 'ok' }));
