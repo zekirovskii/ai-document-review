@@ -4,6 +4,7 @@ import multer from 'multer';
 
 import { ApiError, errorHandler, notFound } from './errors.js';
 import { parseDocumentId } from './documents.js';
+import { analysisOutputSchema } from '@goatech/shared';
 import { newUpload, validatePdf } from './upload.js';
 import { authenticate, resolveOrganization } from './middleware.js';
 import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext, UploadService } from './types.js';
@@ -79,6 +80,8 @@ export const createApp = (dependencies: ApiDependencies): Express => {
       next(error);
     }
   });
+  app.patch('/documents/:id/analysis', ...protectedRoute, async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); const analysis = analysisOutputSchema.parse(request.body); const result = await dependencies.documentsService.updateAnalysis(response.locals.organizationId!, id, response.locals.user!.userId, analysis); response.json({ analysis: result }); } catch (error) { next(error); } });
+  app.post('/documents/:id/approve', ...protectedRoute, async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); await dependencies.documentsService.approve(response.locals.organizationId!, id, response.locals.user!.userId); response.json({ document: { id, status: 'APPROVED' } }); } catch (error) { next(error); } });
 
   app.use((error: unknown, _request: Request, _response: Response, next: NextFunction) => {
     if (error instanceof multer.MulterError) next(new ApiError(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400, error.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'INVALID_MULTIPART', 'Invalid upload request'));

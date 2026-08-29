@@ -18,6 +18,7 @@ export const forbidden = (message = 'Organization membership is required') =>
 
 export const notFound = (message = 'Resource not found') =>
   new ApiError(404, 'NOT_FOUND', message);
+export const conflict = (message = 'Invalid document lifecycle state') => new ApiError(409, 'CONFLICT', message);
 
 export const errorHandler: ErrorRequestHandler = (error, _request, response, next) => {
   void next;

@@ -14,6 +14,8 @@ const createDependencies = (): ApiDependencies => ({
   documentsService: {
     list: vi.fn(async () => []),
     findById: vi.fn(async () => null),
+    updateAnalysis: vi.fn(async (_organizationId, _documentId, _userId, analysis) => analysis),
+    approve: vi.fn(async () => {}),
   },
   uploadService: { upload: vi.fn(async () => {}), remove: vi.fn(async () => {}), createQueued: vi.fn(async () => { throw new Error('not configured'); }) },
   maxPdfSizeBytes: 1024,

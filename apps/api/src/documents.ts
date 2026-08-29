@@ -8,7 +8,7 @@ import {
   organizationIdSchema,
 } from '@goatech/shared';
 
-import { ApiError } from './errors.js';
+import { ApiError, conflict } from './errors.js';
 import type { DocumentDetail, DocumentListItem, DocumentsService } from './types.js';
 
 const documentRowSchema = z.object({
@@ -90,6 +90,23 @@ export const createDocumentsService = (supabase: SupabaseClient): DocumentsServi
           })
         : null,
     };
+  },
+  async updateAnalysis(organizationId, documentId, userId, analysis) {
+    const existing = await this.findById(organizationId, documentId);
+    if (!existing) throw new ApiError(404, 'NOT_FOUND', 'Document not found');
+    if (existing.status !== 'REVIEW_REQUIRED') throw conflict();
+    const { error } = await supabase.rpc('update_review_analysis', { p_document_id: documentId, p_organization_id: organizationId, p_user_id: userId, p_document_type: analysis.documentType, p_language: analysis.language, p_summary: analysis.summary, p_risk_level: analysis.riskLevel, p_flags: analysis.flags });
+    if (error) throw new ApiError(500, 'DATABASE_ERROR', 'Unable to update analysis');
+    return analysis;
+  },
+  async approve(organizationId, documentId, userId) {
+    const existing = await this.findById(organizationId, documentId);
+    if (!existing) throw new ApiError(404, 'NOT_FOUND', 'Document not found');
+    if (existing.status !== 'REVIEW_REQUIRED') throw conflict();
+    if (!existing.analysis) throw new ApiError(500, 'INVALID_ANALYSIS', 'Persisted analysis is invalid');
+    analysisOutputSchema.parse(existing.analysis);
+    const { error } = await supabase.rpc('approve_document', { p_document_id: documentId, p_organization_id: organizationId, p_user_id: userId });
+    if (error) throw new ApiError(500, 'DATABASE_ERROR', 'Unable to approve document');
   },
 });
 

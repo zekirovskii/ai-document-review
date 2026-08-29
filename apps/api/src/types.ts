@@ -33,6 +33,8 @@ export interface MembershipResolver {
 export interface DocumentsService {
   list(organizationId: OrganizationId): Promise<DocumentListItem[]>;
   findById(organizationId: OrganizationId, documentId: DocumentId): Promise<DocumentDetail | null>;
+  updateAnalysis(organizationId: OrganizationId, documentId: DocumentId, userId: string, analysis: AnalysisOutput): Promise<AnalysisOutput>;
+  approve(organizationId: OrganizationId, documentId: DocumentId, userId: string): Promise<void>;
 }
 
 export interface UploadService {
