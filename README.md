@@ -236,9 +236,9 @@ Metadata records identifiers and limited operational details such as file size, 
 
 # Testing
 
-Vitest covers shared schema/status contracts and API behavior. The API suite covers health, CORS preflight, missing and invalid authentication, membership denial, organization-scoped listing and document lookup, PDF validation, and queue creation. It also verifies Railway `PORT` precedence.
+Vitest covers shared schema/status contracts, API behavior, and focused worker pipeline boundaries. The API suite covers health, CORS preflight, missing and invalid authentication, membership denial, organization-scoped listing and document lookup, PDF validation, and queue creation. It also verifies Railway `PORT` precedence.
 
-The current suite contains 3 shared-schema tests and 11 API tests. Worker and web packages have no dedicated test files yet; build, typecheck, and manual production flow verification cover their current core integration.
+Worker tests cover deterministic analysis classification/language/risk output, PDF extraction wrapper outcomes, shared-schema rejection, success and failure persistence paths, atomic-claim RPC invocation, and polling resilience. The current suite contains 3 shared-schema tests, 11 API tests, and 26 worker tests. The web package has no dedicated test files yet; build, typecheck, and manual production flow verification cover its current core integration.
 
 # Technical Decisions
 
@@ -262,7 +262,7 @@ The current suite contains 3 shared-schema tests and 11 API tests. Worker and we
 - There is no advanced observability, monitoring, or operational alerting.
 - Durable request-level upload idempotency is not implemented.
 - Organization switching and multi-membership selection are not implemented.
-- Worker and web packages do not yet have dedicated automated test files.
+- The web package does not yet have dedicated automated test files.
 
 # Production Improvements
 
