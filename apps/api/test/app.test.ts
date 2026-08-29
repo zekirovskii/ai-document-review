@@ -15,6 +15,8 @@ const createDependencies = (): ApiDependencies => ({
     list: vi.fn(async () => []),
     findById: vi.fn(async () => null),
   },
+  uploadService: { upload: vi.fn(async () => {}), remove: vi.fn(async () => {}), createQueued: vi.fn(async () => { throw new Error('not configured'); }) },
+  maxPdfSizeBytes: 1024,
 });
 
 describe('API foundation', () => {
@@ -64,5 +66,22 @@ describe('API foundation', () => {
       .set('Authorization', 'Bearer valid-token');
     expect(response.status).toBe(404);
     expect(response.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('rejects invalid PDF uploads before storage', async () => {
+    const dependencies = createDependencies();
+    const response = await request(createApp(dependencies)).post('/documents').set('Authorization', 'Bearer valid-token').attach('file', Buffer.from('not-a-pdf'), { filename: 'fake.pdf', contentType: 'application/pdf' });
+    expect(response.status).toBe(400);
+    expect(dependencies.uploadService.upload).not.toHaveBeenCalled();
+  });
+
+  it('uploads a valid PDF and queues it without processing inline', async () => {
+    const dependencies = createDependencies();
+    dependencies.uploadService.createQueued = vi.fn(async (input) => ({ id: input.documentId, originalFilename: input.originalFilename, status: 'QUEUED' as const, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }));
+    const response = await request(createApp(dependencies)).post('/documents').set('Authorization', 'Bearer valid-token').attach('file', Buffer.from('%PDF-1.4\n'), { filename: '../agreement.pdf', contentType: 'application/pdf' });
+    expect(response.status).toBe(201);
+    expect(response.body.document.status).toBe('QUEUED');
+    expect(dependencies.uploadService.upload).toHaveBeenCalledOnce();
+    expect(dependencies.uploadService.createQueued).toHaveBeenCalledOnce();
   });
 });

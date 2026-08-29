@@ -44,6 +44,7 @@ The Express API currently exposes:
 - `GET /health` without authentication.
 - `GET /documents` with a verified Supabase Bearer token and resolved organization membership.
 - `GET /documents/:id` with the same protection; it returns document metadata and a validated analysis when present.
+- `POST /documents` accepts one backend-uploaded PDF, validates its MIME type, size, safe filename, and `%PDF-` signature, then returns a queued document.
 
 API errors use a consistent JSON envelope. The server verifies access tokens using Supabase Auth's `getUser(token)` before attaching a minimal user context.
 
@@ -59,6 +60,8 @@ TODO: PDF extraction is not implemented. OCR is outside the initial scope.
 
 The `documents` Supabase Storage bucket is private and accepts only `application/pdf` objects up to 10 MiB. Browser storage policies are intentionally absent because planned uploads and downloads go through the backend; no browser client receives direct object access. Service-role credentials appear only in server application environment templates and must never be exposed through `NEXT_PUBLIC_*` variables.
 
+The project-configured `MAX_PDF_SIZE_BYTES` limit defaults to 10 MiB. Uploads use `<organization_id>/<document_id>/<safe_filename>` in private Storage. After a successful object upload, one database RPC atomically creates the `QUEUED` document, matching queued processing job, and `DOCUMENT_UPLOADED` audit record. If that transaction fails, the API attempts to remove the object. Extraction and analysis are deliberately not performed inline. Request-level idempotency remains a production improvement.
+
 The web app uses Supabase SSR browser/server clients with cookie session refresh middleware. `/login` supports email/password sign-in and `/documents` redirects unauthenticated visitors to `/login`. Its API helper forwards the current access token as a Bearer token; the API still verifies it independently.
 
 # Technical Decisions
@@ -67,7 +70,7 @@ UUIDs are used for all application primary keys. Composite foreign keys keep ana
 
 # Known Limitations
 
-There is no upload path, worker loop, PDF extraction, deterministic provider, document UI, analysis editing, approval flow, Railway configuration, or migration test environment yet.
+There is no worker loop, PDF extraction, deterministic provider, analysis editing, approval flow, Railway configuration, or migration test environment yet.
 
 # Production Improvements
 

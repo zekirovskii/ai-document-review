@@ -34,3 +34,9 @@ export interface DocumentsService {
   list(organizationId: OrganizationId): Promise<DocumentListItem[]>;
   findById(organizationId: OrganizationId, documentId: DocumentId): Promise<DocumentDetail | null>;
 }
+
+export interface UploadService {
+  upload(path: string, content: Buffer): Promise<void>;
+  remove(path: string): Promise<void>;
+  createQueued(input: { documentId: DocumentId; organizationId: OrganizationId; userId: string; originalFilename: string; storagePath: string; fileSize: number }): Promise<DocumentListItem>;
+}

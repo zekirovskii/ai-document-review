@@ -1,14 +1,18 @@
-import express, { type Express, type Request, type Response } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import multer from 'multer';
 
-import { errorHandler, notFound } from './errors.js';
+import { ApiError, errorHandler, notFound } from './errors.js';
 import { parseDocumentId } from './documents.js';
+import { newUpload, validatePdf } from './upload.js';
 import { authenticate, resolveOrganization } from './middleware.js';
-import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext } from './types.js';
+import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext, UploadService } from './types.js';
 
 export interface ApiDependencies {
   authVerifier: AuthVerifier;
   membershipResolver: MembershipResolver;
   documentsService: DocumentsService;
+  uploadService: UploadService;
+  maxPdfSizeBytes: number;
 }
 
 type ContextResponse = Response<unknown, RequestContext>;
@@ -23,6 +27,25 @@ export const createApp = (dependencies: ApiDependencies): Express => {
     authenticate(dependencies.authVerifier),
     resolveOrganization(dependencies.membershipResolver),
   ];
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: dependencies.maxPdfSizeBytes, files: 1 } });
+
+  app.post('/documents', ...protectedRoute, upload.single('file'), async (request: Request, response: ContextResponse, next) => {
+    try {
+      if (!request.file) throw new ApiError(400, 'FILE_REQUIRED', 'A PDF file is required');
+      validatePdf(request.file, dependencies.maxPdfSizeBytes);
+      const organizationId = response.locals.organizationId!;
+      const user = response.locals.user!;
+      const { documentId, storagePath } = newUpload(organizationId, request.file.originalname);
+      await dependencies.uploadService.upload(storagePath, request.file.buffer);
+      try {
+        const document = await dependencies.uploadService.createQueued({ documentId, organizationId, userId: user.userId, originalFilename: request.file.originalname, storagePath, fileSize: request.file.size });
+        response.status(201).json({ document });
+      } catch (error) {
+        await dependencies.uploadService.remove(storagePath);
+        throw error;
+      }
+    } catch (error) { next(error); }
+  });
 
   app.get('/documents', ...protectedRoute, async (_request: Request, response: ContextResponse, next) => {
     try {
@@ -54,6 +77,10 @@ export const createApp = (dependencies: ApiDependencies): Express => {
     }
   });
 
+  app.use((error: unknown, _request: Request, _response: Response, next: NextFunction) => {
+    if (error instanceof multer.MulterError) next(new ApiError(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400, error.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'INVALID_MULTIPART', 'Invalid upload request'));
+    else next(error);
+  });
   app.use(errorHandler);
   return app;
 };
