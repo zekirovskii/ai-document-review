@@ -4,7 +4,7 @@ GOATECH's AI Document Review Platform is a multi-tenant document-review assessme
 
 # Architecture
 
-The repository is a pnpm workspace with planned services in `apps/web` (Next.js), `apps/api` (Express), and `apps/worker` (Node.js). Shared Zod schemas and TypeScript types live in `packages/shared`. Supabase migrations live in `supabase/migrations`.
+The repository is a pnpm workspace with a Next.js web app, Express API, and planned Node.js worker. Shared Zod schemas and TypeScript types live in `packages/shared`. Supabase migrations live in `supabase/migrations`.
 
 # Local Setup
 
@@ -21,7 +21,7 @@ Copy each application `.env.example` file to `.env` before a future service need
 
 # Live Deployment
 
-TODO: Railway deployment is not configured in Milestone 1.
+TODO: Railway deployment is not configured.
 
 # Database Model
 
@@ -29,11 +29,23 @@ The migrations define organizations, organization memberships, documents, analys
 
 # Tenant Isolation
 
-Row Level Security is enabled on application tables. Authenticated users can read an organization and its documents, analyses, and audit logs only when a security-definer membership check confirms that `auth.uid()` belongs to the organization. Users may read only their own membership rows, avoiding recursive membership policies.
+Row Level Security is enabled on application tables. Authenticated users can read an organization and its documents, analyses, and audit logs only when a security-definer membership check confirms that `auth.uid()` belongs to the organization. Users may read only their own membership rows, avoiding recursive membership policies. The API separately derives organization context from membership and explicitly scopes every document query by `organization_id`.
+
+For the current assessment flow, a user must have exactly one membership. Missing or multiple memberships result in a controlled `403`; organization switching is not implemented. A document outside that membership is returned as `404` to avoid leaking its existence.
 
 # Background Processing
 
 The database provides `claim_next_processing_job(worker_id)`, which locks one queued job and its queued document with `FOR UPDATE SKIP LOCKED`, marks both as processing, and returns the job atomically. A worker process has not been implemented yet.
+
+# API
+
+The Express API currently exposes:
+
+- `GET /health` without authentication.
+- `GET /documents` with a verified Supabase Bearer token and resolved organization membership.
+- `GET /documents/:id` with the same protection; it returns document metadata and a validated analysis when present.
+
+API errors use a consistent JSON envelope. The server verifies access tokens using Supabase Auth's `getUser(token)` before attaching a minimal user context.
 
 # PDF Extraction
 
@@ -41,11 +53,13 @@ TODO: PDF extraction is not implemented. OCR is outside the initial scope.
 
 # Structured Analysis & Validation
 
-`packages/shared` defines the required Zod analysis schema: document type, language, summary, risk level, and flags. Persisting or generating analysis output is not implemented yet.
+`packages/shared` defines the required Zod analysis schema: document type, language, summary, risk level, and flags. The document detail API validates persisted analysis data against this schema before returning it. Persisting or generating analysis output is not implemented yet.
 
 # Security
 
 The `documents` Supabase Storage bucket is private and accepts only `application/pdf` objects up to 10 MiB. Browser storage policies are intentionally absent because planned uploads and downloads go through the backend; no browser client receives direct object access. Service-role credentials appear only in server application environment templates and must never be exposed through `NEXT_PUBLIC_*` variables.
+
+The web app uses Supabase SSR browser/server clients with cookie session refresh middleware. `/login` supports email/password sign-in and `/documents` redirects unauthenticated visitors to `/login`. Its API helper forwards the current access token as a Bearer token; the API still verifies it independently.
 
 # Technical Decisions
 
@@ -53,7 +67,7 @@ UUIDs are used for all application primary keys. Composite foreign keys keep ana
 
 # Known Limitations
 
-There is no login flow, API, upload path, worker loop, PDF extraction, deterministic provider, document UI, approval flow, Railway configuration, or migration test environment yet.
+There is no upload path, worker loop, PDF extraction, deterministic provider, document UI, analysis editing, approval flow, Railway configuration, or migration test environment yet.
 
 # Production Improvements
 
