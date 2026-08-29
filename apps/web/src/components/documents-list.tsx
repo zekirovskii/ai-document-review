@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '../lib/api';
 import { StatusBadge } from './status-badge';
@@ -17,24 +17,31 @@ export const DocumentsList = () => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const loadDocuments = useCallback(async () => {
+    const response = await apiFetch('/documents');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message ?? 'Unable to load documents');
+    setItems(data.documents ?? []);
+  }, []);
+
   useEffect(() => {
     let isCurrent = true;
-
-    apiFetch('/documents')
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error?.message ?? 'Unable to load documents');
-        if (isCurrent) setItems(data.documents ?? []);
-      })
-      .catch((loadError: unknown) => {
+    const load = async () => {
+      try {
+        await loadDocuments();
+        if (isCurrent) setError(null);
+      } catch (loadError) {
         if (isCurrent) setError(loadError instanceof Error ? loadError.message : 'Unable to load documents');
-      })
-      .finally(() => {
+      } finally {
         if (isCurrent) setIsLoading(false);
-      });
+      }
+    };
 
-    return () => { isCurrent = false; };
-  }, []);
+    void load();
+    const intervalId = window.setInterval(() => { void load(); }, 5000);
+
+    return () => { isCurrent = false; window.clearInterval(intervalId); };
+  }, [loadDocuments]);
 
   if (isLoading) return <p className="loading-state">Loading documents…</p>;
   if (error) return <p className="notice notice--error" role="alert">{error}</p>;

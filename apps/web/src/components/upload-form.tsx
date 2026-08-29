@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '../lib/api';
 
@@ -9,8 +9,14 @@ export const UploadForm = () => {
   const [message, setMessage] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const uploadInFlight = useRef(false);
 
-  async function submit(formData: FormData) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (uploadInFlight.current) return;
+
+    const formData = new FormData(event.currentTarget);
+    uploadInFlight.current = true;
     setUploading(true);
     setMessage(null);
 
@@ -22,12 +28,13 @@ export const UploadForm = () => {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Upload failed');
     } finally {
+      uploadInFlight.current = false;
       setUploading(false);
     }
   }
 
   return (
-    <form action={submit} className="form-grid">
+    <form className="form-grid" onSubmit={(event) => { void submit(event); }}>
       <label className="upload-dropzone" htmlFor="file">
         <span className="upload-dropzone__title">Choose a PDF to upload</span>
         <span className="upload-dropzone__hint">Select a file from your device. PDF files only, up to 10 MiB.</span>

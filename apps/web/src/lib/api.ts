@@ -7,8 +7,15 @@ export const apiFetch = async (path: string, init: RequestInit = {}) => {
   if (!baseUrl) throw new Error('Missing required environment variable: NEXT_PUBLIC_API_BASE_URL');
   const { data } = await createClient().auth.getSession();
   if (!data.session?.access_token) throw new Error('Authentication required');
-  return fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: { ...init.headers, Authorization: `Bearer ${data.session.access_token}` },
-  });
+  try {
+    return await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${data.session.access_token}` },
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error('Unable to reach the API. Confirm that the API is running, then try again.');
+    }
+    throw error;
+  }
 };

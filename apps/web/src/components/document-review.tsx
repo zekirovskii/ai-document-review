@@ -58,6 +58,18 @@ export const DocumentReview = ({ id }: { id: string }) => {
       .finally(() => setIsLoading(false));
   }, [loadDocument]);
 
+  useEffect(() => {
+    if (document?.status !== 'QUEUED' && document?.status !== 'PROCESSING') return;
+
+    const intervalId = window.setInterval(() => {
+      void loadDocument().catch((loadError: unknown) => {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to refresh document');
+      });
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [document?.status, loadDocument]);
+
   const change = <Key extends keyof Analysis>(key: Key, value: Analysis[Key]) => {
     if (!form) return;
     setForm({ ...form, [key]: value });
@@ -152,11 +164,11 @@ export const DocumentReview = ({ id }: { id: string }) => {
       ) : null}
 
       {document.status === 'QUEUED' ? (
-        <section className="card"><div className="card__body"><h2 className="card__heading">Queued for processing</h2><p className="card__description">Your PDF is waiting for a worker. Analysis will appear here once processing is complete.</p></div></section>
+        <section className="card"><div className="card__body"><h2 className="card__heading">Queued for processing</h2><p className="card__description">Your PDF is waiting for a worker. This page refreshes automatically while processing is pending.</p></div></section>
       ) : null}
 
       {document.status === 'PROCESSING' ? (
-        <section className="card"><div className="card__body"><h2 className="card__heading">Processing document</h2><p className="card__description">The PDF is being extracted and analysed. Refresh this page shortly to see the result.</p></div></section>
+        <section className="card"><div className="card__body"><h2 className="card__heading">Processing document</h2><p className="card__description">The PDF is being extracted and analysed. This page refreshes automatically while processing continues.</p></div></section>
       ) : null}
 
       {isReviewRequired ? (

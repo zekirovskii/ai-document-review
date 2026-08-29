@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "node --env-file=.env --import tsx --watch src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
