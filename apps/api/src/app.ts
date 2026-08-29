@@ -22,7 +22,8 @@ type ContextResponse = Response<unknown, RequestContext>;
 
 export const createApp = (dependencies: ApiDependencies): Express => {
   const app = express();
-  app.use(cors({ origin: dependencies.corsOrigin }));
+  const corsOrigins = dependencies.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
+  app.use(cors({ origin: corsOrigins }));
   app.use(express.json());
 
   app.get('/health', (_request, response) => response.json({ status: 'ok' }));

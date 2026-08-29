@@ -38,6 +38,17 @@ describe('API foundation', () => {
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:3000');
   });
 
+  it('allows the loopback web origin configured for local development', async () => {
+    const dependencies = createDependencies();
+    dependencies.corsOrigin = 'http://localhost:3000,http://127.0.0.1:3000';
+    const response = await request(createApp(dependencies))
+      .options('/documents')
+      .set('Origin', 'http://127.0.0.1:3000')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(response.status).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe('http://127.0.0.1:3000');
+  });
+
   it('rejects a protected endpoint without a token', async () => {
     const response = await request(createApp(createDependencies())).get('/documents');
     expect(response.status).toBe(401);

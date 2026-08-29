@@ -19,15 +19,20 @@ export const UploadForm = () => {
     uploadInFlight.current = true;
     setUploading(true);
     setMessage(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 60000);
 
     try {
-      const response = await apiFetch('/documents', { method: 'POST', body: formData });
+      const response = await apiFetch('/documents', { method: 'POST', body: formData, signal: controller.signal });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message ?? 'Upload failed');
       router.push(`/documents/${body.document.id}`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Upload failed');
+      setMessage(error instanceof DOMException && error.name === 'AbortError'
+        ? 'The upload took longer than one minute. Check the documents list before trying again.'
+        : error instanceof Error ? error.message : 'Upload failed');
     } finally {
+      window.clearTimeout(timeoutId);
       uploadInFlight.current = false;
       setUploading(false);
     }

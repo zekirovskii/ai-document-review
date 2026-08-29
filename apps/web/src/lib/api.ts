@@ -14,7 +14,7 @@ export const apiFetch = async (path: string, init: RequestInit = {}) => {
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error('Unable to reach the API. Confirm that the API is running, then try again.');
+      throw new Error('The API request was blocked or unavailable. Confirm that the API is running and that CORS_ORIGIN matches this browser URL.');
     }
     throw error;
   }
