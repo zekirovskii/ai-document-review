@@ -36,6 +36,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build shared contract
+        run: corepack pnpm --filter @goatech/shared build
       - name: Lint
         run: corepack pnpm lint
       - name: Typecheck
