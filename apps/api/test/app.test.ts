@@ -20,13 +20,42 @@ const createDependencies = (): ApiDependencies => ({
   uploadService: { upload: vi.fn(async () => {}), remove: vi.fn(async () => {}), createQueued: vi.fn(async () => { throw new Error('not configured'); }) },
   maxPdfSizeBytes: 1024,
   corsOrigin: 'http://localhost:3000',
+  rateLimit: {
+    windowMs: 60_000,
+    maxRequests: 120,
+    uploadMaxRequests: 10,
+    mutationMaxRequests: 60,
+  },
 });
+
+const rateLimitedDependencies = () => {
+  const dependencies = createDependencies();
+  dependencies.rateLimit = {
+    windowMs: 60_000,
+    maxRequests: 2,
+    uploadMaxRequests: 1,
+    mutationMaxRequests: 2,
+  };
+  return dependencies;
+};
 
 describe('API foundation', () => {
   it('serves health without authentication', async () => {
     const response = await request(createApp(createDependencies())).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'ok' });
+  });
+
+  it('does not rate limit repeated health checks', async () => {
+    const app = createApp(rateLimitedDependencies());
+
+    for (let index = 0; index < 4; index += 1) {
+      await expect(request(app).get('/health')).resolves.toMatchObject({ status: 200 });
+    }
+  });
+
+  it('uses exactly one trusted proxy hop for the Railway reverse proxy', () => {
+    expect(createApp(createDependencies()).get('trust proxy')).toBe(1);
   });
 
   it('allows the configured web origin to preflight document uploads', async () => {
@@ -60,6 +89,48 @@ describe('API foundation', () => {
       .get('/documents')
       .set('Authorization', 'Bearer invalid-token');
     expect(response.status).toBe(401);
+  });
+
+  it('keeps unauthenticated protected requests outside the authenticated rate-limit bucket', async () => {
+    const app = createApp(rateLimitedDependencies());
+
+    await expect(request(app).get('/documents')).resolves.toMatchObject({ status: 401 });
+    await expect(request(app).get('/documents')).resolves.toMatchObject({ status: 401 });
+  });
+
+  it('limits general protected routes and returns the standard 429 error', async () => {
+    const app = createApp(rateLimitedDependencies());
+
+    await expect(request(app).get('/documents').set('Authorization', 'Bearer valid-token')).resolves.toMatchObject({ status: 200 });
+    const second = await request(app).get('/documents').set('Authorization', 'Bearer valid-token');
+    const limited = await request(app).get('/documents').set('Authorization', 'Bearer valid-token');
+
+    expect(second.status).toBe(200);
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' } });
+    expect(limited.headers.ratelimit).toBeDefined();
+  });
+
+  it('uses the stricter upload limit before multipart processing', async () => {
+    const app = createApp(rateLimitedDependencies());
+
+    await expect(request(app).post('/documents').set('Authorization', 'Bearer valid-token')).resolves.toMatchObject({ status: 400 });
+    const limited = await request(app).post('/documents').set('Authorization', 'Bearer valid-token');
+
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe('RATE_LIMITED');
+  });
+
+  it('shares the mutation limit between review edits and approvals', async () => {
+    const app = createApp(rateLimitedDependencies());
+    const analysis = { documentType: 'contract', language: 'en', summary: 'Summary', riskLevel: 'low', flags: [] };
+
+    await expect(request(app).patch(`/documents/${documentId}/analysis`).set('Authorization', 'Bearer valid-token').send(analysis)).resolves.toMatchObject({ status: 200 });
+    await expect(request(app).post(`/documents/${documentId}/approve`).set('Authorization', 'Bearer valid-token')).resolves.toMatchObject({ status: 200 });
+    const limited = await request(app).patch(`/documents/${documentId}/analysis`).set('Authorization', 'Bearer valid-token').send(analysis);
+
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe('RATE_LIMITED');
   });
 
   it('returns a controlled denial when membership is missing', async () => {
