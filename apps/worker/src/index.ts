@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-import { deterministicAnalysisProvider } from './analysis.js';
+import { createAnalysisProvider } from './analysis.js';
 import { extractTextFromPdf } from './extraction.js';
 import { processAvailableJob } from './poller.js';
 import { processClaimedJob } from './processor.js';
@@ -21,6 +21,15 @@ const positiveInteger = (key: string, fallback: number) => {
 const interval = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 2000);
 const workerId = process.env.WORKER_ID ?? 'local-worker-1';
 const staleProcessingMs = positiveInteger('WORKER_STALE_PROCESSING_MS', 300000);
+const analysisProvider = createAnalysisProvider({
+  provider: process.env.ANALYSIS_PROVIDER,
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  geminiModel: process.env.GEMINI_MODEL,
+  geminiMaxInputChars: process.env.GEMINI_MAX_INPUT_CHARS === undefined
+    ? undefined
+    : positiveInteger('GEMINI_MAX_INPUT_CHARS', 120000),
+});
+console.info(`Analysis provider: ${process.env.ANALYSIS_PROVIDER ?? 'deterministic'}${process.env.ANALYSIS_PROVIDER === 'gemini' ? ` (${process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'})` : ''}`);
 const supabase = createClient(
   required('SUPABASE_URL'),
   required('SUPABASE_SERVICE_ROLE_KEY'),
@@ -64,7 +73,7 @@ const processOne = async () => {
           return error || !blob ? null : Buffer.from(await blob.arrayBuffer());
         },
         extractText: extractTextFromPdf,
-        analyze: deterministicAnalysisProvider,
+        analyze: (input) => analysisProvider.analyze(input),
         complete: async (claimedJob, analysis) => {
           const { error } = await supabase.rpc('complete_processing_job', {
             p_job_id: claimedJob.id,

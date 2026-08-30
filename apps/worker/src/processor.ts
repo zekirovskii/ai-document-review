@@ -1,5 +1,7 @@
 import { analysisOutputSchema, type AnalysisOutput } from '@goatech/shared';
 
+import type { AnalysisInput } from './analysis.js';
+
 export interface ClaimedProcessingJob {
   id: string;
   document_id: string;
@@ -15,7 +17,7 @@ export interface ProcessingDependencies {
   loadDocument(job: ClaimedProcessingJob): Promise<StoredDocument | null>;
   downloadPdf(storagePath: string): Promise<Buffer | null>;
   extractText(input: Buffer): Promise<string>;
-  analyze(text: string): unknown;
+  analyze(input: AnalysisInput): unknown | Promise<unknown>;
   complete(job: ClaimedProcessingJob, analysis: AnalysisOutput): Promise<void>;
   fail(job: ClaimedProcessingJob, reason: string): Promise<void>;
 }
@@ -36,7 +38,10 @@ export const processClaimedJob = async (
     if (!pdf) throw new Error('STORAGE_DOWNLOAD_FAILED');
 
     const text = await dependencies.extractText(pdf);
-    const analysis = analysisOutputSchema.safeParse(dependencies.analyze(text));
+    const analysis = analysisOutputSchema.safeParse(await dependencies.analyze({
+      text,
+      filename: document.originalFilename,
+    }));
     if (!analysis.success) throw new Error('ANALYSIS_VALIDATION_FAILED');
 
     await dependencies.complete(job, analysis.data);
