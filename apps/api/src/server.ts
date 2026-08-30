@@ -15,6 +15,12 @@ const app = createApp({
   uploadService: createUploadService(supabase),
   maxPdfSizeBytes: config.maxPdfSizeBytes,
   corsOrigin: config.corsOrigin,
+  rateLimit: {
+    windowMs: config.rateLimitWindowMs,
+    maxRequests: config.rateLimitMaxRequests,
+    uploadMaxRequests: config.uploadRateLimitMaxRequests,
+    mutationMaxRequests: config.mutationRateLimitMaxRequests,
+  },
 });
 
 app.listen(config.port, () => {

@@ -7,6 +7,7 @@ import { parseDocumentId } from './documents.js';
 import { analysisOutputSchema } from '@goatech/shared';
 import { newUpload, validatePdf } from './upload.js';
 import { authenticate, resolveOrganization } from './middleware.js';
+import { createApiRateLimiters, type RateLimitConfig } from './rate-limit.js';
 import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext, UploadService } from './types.js';
 
 export interface ApiDependencies {
@@ -16,25 +17,31 @@ export interface ApiDependencies {
   uploadService: UploadService;
   maxPdfSizeBytes: number;
   corsOrigin: string;
+  rateLimit: RateLimitConfig;
 }
 
 type ContextResponse = Response<unknown, RequestContext>;
 
 export const createApp = (dependencies: ApiDependencies): Express => {
   const app = express();
+  // Railway routes public requests through one proxy hop. Trusting exactly that hop
+  // makes Express's standard request.ip (and the limiter) use the client address.
+  app.set('trust proxy', 1);
   const corsOrigins = dependencies.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
   app.use(cors({ origin: corsOrigins }));
   app.use(express.json());
 
   app.get('/health', (_request, response) => response.json({ status: 'ok' }));
 
-  const protectedRoute = [
+  const rateLimiters = createApiRateLimiters(dependencies.rateLimit);
+  const protectedRoute = (limiter: ReturnType<typeof createApiRateLimiters>['general']) => [
     authenticate(dependencies.authVerifier),
+    limiter,
     resolveOrganization(dependencies.membershipResolver),
   ];
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: dependencies.maxPdfSizeBytes, files: 1 } });
 
-  app.post('/documents', ...protectedRoute, upload.single('file'), async (request: Request, response: ContextResponse, next) => {
+  app.post('/documents', ...protectedRoute(rateLimiters.upload), upload.single('file'), async (request: Request, response: ContextResponse, next) => {
     try {
       if (!request.file) throw new ApiError(400, 'FILE_REQUIRED', 'A PDF file is required');
       validatePdf(request.file, dependencies.maxPdfSizeBytes);
@@ -52,7 +59,7 @@ export const createApp = (dependencies: ApiDependencies): Express => {
     } catch (error) { next(error); }
   });
 
-  app.get('/documents', ...protectedRoute, async (_request: Request, response: ContextResponse, next) => {
+  app.get('/documents', ...protectedRoute(rateLimiters.general), async (_request: Request, response: ContextResponse, next) => {
     try {
       const documents = await dependencies.documentsService.list(response.locals.organizationId!);
       response.json({ documents });
@@ -61,7 +68,7 @@ export const createApp = (dependencies: ApiDependencies): Express => {
     }
   });
 
-  app.get('/documents/:id', ...protectedRoute, async (request: Request, response: ContextResponse, next) => {
+  app.get('/documents/:id', ...protectedRoute(rateLimiters.general), async (request: Request, response: ContextResponse, next) => {
     try {
       const documentId = typeof request.params.id === 'string'
         ? parseDocumentId(request.params.id)
@@ -81,8 +88,8 @@ export const createApp = (dependencies: ApiDependencies): Express => {
       next(error);
     }
   });
-  app.patch('/documents/:id/analysis', ...protectedRoute, async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); const analysis = analysisOutputSchema.parse(request.body); const result = await dependencies.documentsService.updateAnalysis(response.locals.organizationId!, id, response.locals.user!.userId, analysis); response.json({ analysis: result }); } catch (error) { next(error); } });
-  app.post('/documents/:id/approve', ...protectedRoute, async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); await dependencies.documentsService.approve(response.locals.organizationId!, id, response.locals.user!.userId); response.json({ document: { id, status: 'APPROVED' } }); } catch (error) { next(error); } });
+  app.patch('/documents/:id/analysis', ...protectedRoute(rateLimiters.mutation), async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); const analysis = analysisOutputSchema.parse(request.body); const result = await dependencies.documentsService.updateAnalysis(response.locals.organizationId!, id, response.locals.user!.userId, analysis); response.json({ analysis: result }); } catch (error) { next(error); } });
+  app.post('/documents/:id/approve', ...protectedRoute(rateLimiters.mutation), async (request: Request, response: ContextResponse, next) => { try { const id = typeof request.params.id === 'string' ? parseDocumentId(request.params.id) : null; if (!id) throw notFound('Document not found'); await dependencies.documentsService.approve(response.locals.organizationId!, id, response.locals.user!.userId); response.json({ document: { id, status: 'APPROVED' } }); } catch (error) { next(error); } });
 
   app.use((error: unknown, _request: Request, _response: Response, next: NextFunction) => {
     if (error instanceof multer.MulterError) next(new ApiError(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400, error.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'INVALID_MULTIPART', 'Invalid upload request'));

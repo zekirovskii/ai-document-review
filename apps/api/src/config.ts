@@ -4,6 +4,10 @@ export interface ApiConfig {
   supabaseServiceRoleKey: string;
   maxPdfSizeBytes: number;
   corsOrigin: string;
+  rateLimitWindowMs: number;
+  rateLimitMaxRequests: number;
+  uploadRateLimitMaxRequests: number;
+  mutationRateLimitMaxRequests: number;
 }
 
 const required = (environment: NodeJS.ProcessEnv, key: string): string => {
@@ -17,10 +21,22 @@ const required = (environment: NodeJS.ProcessEnv, key: string): string => {
 export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig => {
   const port = Number(environment.PORT ?? environment.API_PORT ?? 3001);
   const maxPdfSizeBytes = Number(environment.MAX_PDF_SIZE_BYTES ?? 10485760);
+  const rateLimitWindowMs = Number(environment.RATE_LIMIT_WINDOW_MS ?? 60000);
+  const rateLimitMaxRequests = Number(environment.RATE_LIMIT_MAX_REQUESTS ?? 120);
+  const uploadRateLimitMaxRequests = Number(environment.UPLOAD_RATE_LIMIT_MAX_REQUESTS ?? 10);
+  const mutationRateLimitMaxRequests = Number(environment.MUTATION_RATE_LIMIT_MAX_REQUESTS ?? 60);
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error('PORT must be a positive integer');
   }
   if (!Number.isInteger(maxPdfSizeBytes) || maxPdfSizeBytes <= 0) throw new Error('MAX_PDF_SIZE_BYTES must be a positive integer');
+  for (const [key, value] of [
+    ['RATE_LIMIT_WINDOW_MS', rateLimitWindowMs],
+    ['RATE_LIMIT_MAX_REQUESTS', rateLimitMaxRequests],
+    ['UPLOAD_RATE_LIMIT_MAX_REQUESTS', uploadRateLimitMaxRequests],
+    ['MUTATION_RATE_LIMIT_MAX_REQUESTS', mutationRateLimitMaxRequests],
+  ] as const) {
+    if (!Number.isInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer`);
+  }
 
   return {
     port,
@@ -28,5 +44,9 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
     supabaseServiceRoleKey: required(environment, 'SUPABASE_SERVICE_ROLE_KEY'),
     maxPdfSizeBytes,
     corsOrigin: environment.CORS_ORIGIN ?? 'http://localhost:3000',
+    rateLimitWindowMs,
+    rateLimitMaxRequests,
+    uploadRateLimitMaxRequests,
+    mutationRateLimitMaxRequests,
   };
 };
