@@ -25,6 +25,7 @@ describe('getApiConfig', () => {
       rateLimitMaxRequests: 120,
       uploadRateLimitMaxRequests: 10,
       mutationRateLimitMaxRequests: 60,
+      logLevel: 'info',
     });
   });
 
@@ -34,5 +35,13 @@ describe('getApiConfig', () => {
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     })).toThrow('RATE_LIMIT_MAX_REQUESTS must be a positive integer');
+  });
+
+  it('rejects an unsupported log level', () => {
+    expect(() => getApiConfig({
+      LOG_LEVEL: 'verbose',
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    })).toThrow('LOG_LEVEL must be debug, info, warn, or error');
   });
 });

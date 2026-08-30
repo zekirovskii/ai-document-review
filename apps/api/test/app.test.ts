@@ -4,9 +4,17 @@ import request from 'supertest';
 import { createApp } from '../src/app';
 import type { ApiDependencies } from '../src/app';
 import { ApiError } from '../src/errors';
+import type { Logger } from '../src/logger';
 
 const organizationId = '11111111-1111-4111-8111-111111111111' as const;
 const documentId = '22222222-2222-4222-8222-222222222222' as const;
+
+const createLogger = () => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}) satisfies Logger;
 
 const createDependencies = (): ApiDependencies => ({
   authVerifier: { verifyAccessToken: vi.fn(async (token) => (token === 'valid-token' ? { userId: 'user-1' } : null)) },
@@ -26,6 +34,7 @@ const createDependencies = (): ApiDependencies => ({
     uploadMaxRequests: 10,
     mutationMaxRequests: 60,
   },
+  logger: createLogger(),
 });
 
 const rateLimitedDependencies = () => {
@@ -44,6 +53,15 @@ describe('API foundation', () => {
     const response = await request(createApp(createDependencies())).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'ok' });
+  });
+
+  it('returns a generated request ID and reuses a valid incoming ID', async () => {
+    const app = createApp(createDependencies());
+    const generated = await request(app).get('/health');
+    const reused = await request(app).get('/health').set('x-request-id', 'client-request-42');
+
+    expect(generated.headers['x-request-id']).toMatch(/^[A-Za-z0-9._-]+$/);
+    expect(reused.headers['x-request-id']).toBe('client-request-42');
   });
 
   it('does not rate limit repeated health checks', async () => {
@@ -99,7 +117,8 @@ describe('API foundation', () => {
   });
 
   it('limits general protected routes and returns the standard 429 error', async () => {
-    const app = createApp(rateLimitedDependencies());
+    const dependencies = rateLimitedDependencies();
+    const app = createApp(dependencies);
 
     await expect(request(app).get('/documents').set('Authorization', 'Bearer valid-token')).resolves.toMatchObject({ status: 200 });
     const second = await request(app).get('/documents').set('Authorization', 'Bearer valid-token');
@@ -109,6 +128,10 @@ describe('API foundation', () => {
     expect(limited.status).toBe(429);
     expect(limited.body).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' } });
     expect(limited.headers.ratelimit).toBeDefined();
+    expect(dependencies.logger.warn).toHaveBeenCalledWith('Rate limit exceeded', expect.objectContaining({
+      path: '/documents',
+      rateLimitCategory: 'general',
+    }));
   });
 
   it('uses the stricter upload limit before multipart processing', async () => {
@@ -143,6 +166,19 @@ describe('API foundation', () => {
       .set('Authorization', 'Bearer valid-token');
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('keeps controlled error responses unchanged while logging safe context', async () => {
+    const dependencies = createDependencies();
+    const response = await request(createApp(dependencies)).get('/documents');
+
+    expect(response.body).toEqual({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    expect(dependencies.logger.warn).toHaveBeenCalledWith('API request failed', expect.objectContaining({
+      errorCode: 'UNAUTHORIZED',
+      method: 'GET',
+      path: '/documents',
+      statusCode: 401,
+    }));
   });
 
   it('uses the resolved organization for document listing', async () => {
