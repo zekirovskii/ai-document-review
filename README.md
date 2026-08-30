@@ -27,13 +27,39 @@ Upload → QUEUED document + job
                            │
               text PDF extraction (pdf-parse)
                            │
-       deterministic analysis (default) or Gemini
+        AnalysisProvider
+           ├─ Gemini (optional)
+           └─ deterministic default / fallback
                            │ Zod validation
                            ▼
                     REVIEW_REQUIRED
                            │ human edit / approval
                            ▼
                        APPROVED
+```
+
+# Features
+
+- Supabase Auth with server-verified Bearer tokens and organization-scoped access.
+- Private PDF upload, asynchronous processing, structured analysis, human review, and approval.
+- Atomic PostgreSQL job lifecycle with bounded retries and safe stale-job recovery.
+- Optional Gemini analysis with deterministic fallback; deterministic analysis remains the core default.
+
+# Technology Stack
+
+- Next.js 15 and React 19 web application
+- Express and TypeScript API; Node.js TypeScript worker
+- Supabase Auth, PostgreSQL, private Storage, and SQL RPCs
+- pnpm workspace, Zod, Vitest, GitHub Actions, Railway, and Docker
+
+# Repository Structure
+
+```text
+apps/web       Next.js browser application
+apps/api       Express API
+apps/worker    background job processor
+packages/shared shared Zod contracts and types
+supabase/migrations ordered database, RLS, Storage, and RPC migrations
 ```
 
 # Local Setup
@@ -90,6 +116,7 @@ RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX_REQUESTS=120
 UPLOAD_RATE_LIMIT_MAX_REQUESTS=10
 MUTATION_RATE_LIMIT_MAX_REQUESTS=60
+READINESS_TIMEOUT_MS=3000
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
@@ -117,6 +144,7 @@ WORKER_STALE_PROCESSING_MS=300000
 WORKER_MAX_ATTEMPTS=3
 WORKER_RETRY_BASE_DELAY_MS=5000
 WORKER_RETRY_MAX_DELAY_MS=60000
+WORKER_HEARTBEAT_INTERVAL_MS=60000
 LOG_LEVEL=info
 ANALYSIS_PROVIDER=deterministic
 GEMINI_API_KEY=
@@ -141,7 +169,7 @@ READINESS_TIMEOUT_MS=3000
 WORKER_HEARTBEAT_INTERVAL_MS=60000
 ```
 
-# Live Deployment
+# Railway Deployment
 
 The production deployment has three Railway services:
 
@@ -168,6 +196,17 @@ Document statuses are `QUEUED`, `PROCESSING`, `REVIEW_REQUIRED`, `APPROVED`, and
 
 Composite document/organization foreign keys keep analyses, jobs, and audit records within the same tenant. Indexes support organization document listing, queued-job selection, and audit lookups.
 
+# Document Lifecycle
+
+```text
+QUEUED → PROCESSING → REVIEW_REQUIRED → APPROVED
+                 └→ FAILED
+
+retryable processing failure → scheduled retry → QUEUED → later PROCESSING
+```
+
+The worker increments an attempt count during each atomic claim. Retryable infrastructure failures use deterministic exponential backoff, capped at `WORKER_RETRY_MAX_DELAY_MS`; after `WORKER_MAX_ATTEMPTS`, the job and document become `FAILED`.
+
 # Tenant Isolation
 
 Tenant isolation is enforced in depth:
@@ -182,6 +221,10 @@ Tenant isolation is enforced in depth:
 
 The core assessment flow supports exactly one membership per demo user. Missing or multiple memberships are rejected with a controlled `403`; organization switching is not implemented.
 
+# PDF Upload & Private Storage
+
+The authenticated API accepts one multipart PDF, validates MIME type, `%PDF-` signature, size, and a normalized safe filename, then uploads it to the private `documents` bucket. It generates the path server-side as `<organization_id>/<document_id>/<safe_filename>` and creates the `QUEUED` document, job, and upload audit record through one restricted RPC. Browser clients receive no public Storage URL.
+
 # Background Processing
 
 The upload HTTP request stores the PDF and creates a `QUEUED` document and processing job; it does not extract or analyze content inline.
@@ -190,7 +233,7 @@ The worker continuously polls the PostgreSQL-backed queue. `claim_next_processin
 
 Completion and failure are persisted through restricted database RPCs. A document-processing failure is handled per job so the worker continues polling. Jobs left in `PROCESSING` beyond `WORKER_STALE_PROCESSING_MS` (default five minutes) are marked `FAILED` by the stale-job recovery RPC.
 
-## Retry Strategy
+# Retry & Job Handling
 
 The worker reuses the existing processing job for bounded retries. Transient infrastructure failures currently classified as retryable are `STORAGE_DOWNLOAD_FAILED` and `ANALYSIS_PERSISTENCE_FAILED`; PDF extraction errors, no extractable text, and invalid analysis output fail immediately. Gemini request failures still use their existing deterministic fallback and do not trigger a retry when that fallback succeeds.
 
@@ -219,6 +262,8 @@ The required analysis contract is shared by API and worker code:
 ```
 
 The core `DeterministicAnalysisProvider` uses local rules for document type, language, risk keywords, summary, and flags. It remains the default provider and is always available.
+
+# Gemini Bonus Provider
 
 The optional bonus `GeminiAnalysisProvider` uses Google's official `@google/genai` Node.js SDK with the stable `gemini-2.5-flash` default model. This model supports structured output and is a practical price/performance choice for text analysis. The provider requests JSON structured output with the exact required fields, parses it, and then validates it with the same shared `analysisOutputSchema`; model structured output does not replace application validation. The worker validates the final provider result again immediately before persistence.
 
@@ -267,6 +312,10 @@ Edits are validated by the shared Zod schema and are only permitted in `REVIEW_R
 - `SECURITY DEFINER` functions use a fixed `search_path`; sensitive RPC execution is restricted to `service_role`.
 - API errors use controlled JSON responses, and cross-tenant lookups use `404`.
 
+# Rate Limiting
+
+The API applies in-memory, IP-based limits after authentication: 120 protected requests per minute, 10 uploads per minute, and 60 review/approval mutations per minute by default. Each API instance maintains its own counters. `/health` and `/ready` remain public operational endpoints and are not rate limited.
+
 # API Endpoints
 
 All endpoints except the public liveness and readiness checks require a verified Supabase Bearer token and a resolved organization membership.
@@ -295,15 +344,39 @@ Metadata records identifiers and limited operational details such as file size, 
 
 # Testing
 
-Vitest covers shared schema/status contracts, API behavior, and focused worker pipeline boundaries. The API suite covers health, CORS preflight, missing and invalid authentication, membership denial, organization-scoped listing and document lookup, PDF validation, and queue creation. It also verifies Railway `PORT` precedence.
+Final validation covers 26 API tests, 44 Worker tests, and 3 shared-contract tests (73 total). The Web package has no dedicated automated test files.
 
-Worker tests cover deterministic analysis classification/language/risk output, mocked Gemini structured responses and fallback behavior, PDF extraction wrapper outcomes, shared-schema rejection, success and failure persistence paths, atomic-claim RPC invocation, and polling resilience. Gemini tests mock the SDK boundary and never call the external API or require an API key. The web package has no dedicated test files yet; build, typecheck, and manual production flow verification cover its current core integration.
+Coverage includes authentication, tenant scoping, PDF validation and queue creation, lifecycle handling, review/approval validation, deterministic analysis, Gemini fallback, extraction, atomic claims, retries, rate limits, structured logging, readiness, and worker heartbeat behavior. Gemini tests mock the SDK boundary and never call the external API or require an API key.
 
 API tests also cover health-check bypass, general/upload/mutation limits, standardized `429` responses, proxy configuration, and preservation of unauthenticated request handling. Rate limiters are created per Express app instance so test state is isolated.
 
 # Continuous Integration
 
 GitHub Actions validates every push to `main` and every pull request targeting `main`. The validation-only workflow runs `lint`, `typecheck`, `test`, and `build` with Node.js 22, Corepack, and a frozen pnpm lockfile. It uses only fake public build-time placeholders for Next.js; it requires no production Supabase, Railway, or Gemini secrets. Railway deployment remains separate and is not performed by CI.
+
+# Docker
+
+Portable production images are available at the repository root:
+
+```bash
+docker build -f Dockerfile.api -t goatech-api .
+docker build -f Dockerfile.worker -t goatech-worker .
+docker build \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co \
+  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=public-placeholder \
+  --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:3001 \
+  -f Dockerfile.web -t goatech-web .
+```
+
+Run API and Worker with their normal runtime variables, never image-baked secrets:
+
+```bash
+docker run --rm -p 3001:3001 --env-file apps/api/.env goatech-api
+docker run --rm --env-file apps/worker/.env goatech-worker
+docker run --rm -p 3000:3000 -e PORT=3000 goatech-web
+```
+
+The Web image receives only `NEXT_PUBLIC_*` configuration at build time. API and Worker receive Supabase and Gemini credentials only at runtime. Docker is a portable option; the validated live deployment remains the three-service Railway deployment.
 
 # Structured Logging
 
@@ -332,11 +405,11 @@ There is no external metrics backend, tracing platform, alerting, or persisted m
 - Database RPCs keep document/job/audit transitions atomic.
 - Private Storage is server-mediated rather than exposed to browser clients.
 - Node 22 is used for compatibility with the current Supabase client.
+- Separate Node 22 Docker images keep the workspace portable without changing Railway behavior.
 
 # Known Limitations
 
 - OCR is not implemented; scanned/image-only PDFs fail with a controlled extraction error.
-- Gemini analysis is available optionally; deterministic analysis remains the default safe mode.
 - Gemini input is bounded by truncation; advanced chunking, RAG, and embeddings are not implemented.
 - Retry backoff is bounded and database-backed, but there is no dead-letter queue or distributed queue broker.
 - There is lightweight service readiness and heartbeat logging, but no external metrics, tracing, or alerting platform.
@@ -348,11 +421,10 @@ There is no external metrics backend, tracing platform, alerting, or persisted m
 # Production Improvements
 
 - Add OCR for scanned PDFs.
-- Add retry/backoff, dead-letter handling, and idempotent upload requests.
 - Add a dead-letter queue or broker if more advanced retry routing is required.
 - Use a shared store such as Redis if globally consistent limits are needed across multiple API replicas.
-- Add metrics and alerting.
-- Expand API, worker, and frontend test coverage.
+- Add distributed metrics, tracing, and alerting.
+- Add deeper frontend end-to-end test coverage.
 
 # Demo Users
 
@@ -369,4 +441,5 @@ These are intentionally limited assessment demo credentials.
 - Live Application: <https://web-production-c4c7c.up.railway.app>
 - Backend API: <https://api-production-d637c.up.railway.app>
 - Health: <https://api-production-d637c.up.railway.app/health>
+- Readiness: <https://api-production-d637c.up.railway.app/ready>
 - Demo Users: listed above
