@@ -1,11 +1,13 @@
 import { analysisOutputSchema, type AnalysisOutput } from '@goatech/shared';
 
 import type { AnalysisInput } from './analysis.js';
+import { calculateRetryDelayMs, isRetryableProcessingError } from './retry.js';
 
 export interface ClaimedProcessingJob {
   id: string;
   document_id: string;
   organization_id: string;
+  attempts: number;
 }
 
 export interface StoredDocument {
@@ -19,11 +21,16 @@ export interface ProcessingDependencies {
   extractText(input: Buffer): Promise<string>;
   analyze(input: AnalysisInput): unknown | Promise<unknown>;
   complete(job: ClaimedProcessingJob, analysis: AnalysisOutput): Promise<void>;
+  retry(job: ClaimedProcessingJob, reason: string, nextAttemptAt: string, retryDelayMs: number): Promise<void>;
   fail(job: ClaimedProcessingJob, reason: string): Promise<void>;
+  maxAttempts: number;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
 }
 
 export type ProcessingResult =
   | { status: 'COMPLETED' }
+  | { status: 'RETRY_SCHEDULED'; reason: string; retryDelayMs: number; nextAttemptAt: string }
   | { status: 'FAILED'; reason: string };
 
 export const processClaimedJob = async (
@@ -48,6 +55,12 @@ export const processClaimedJob = async (
     return { status: 'COMPLETED' };
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'ANALYSIS_FAILED';
+    if (isRetryableProcessingError(reason) && job.attempts < dependencies.maxAttempts) {
+      const retryDelayMs = calculateRetryDelayMs(job.attempts, dependencies.retryBaseDelayMs, dependencies.retryMaxDelayMs);
+      const nextAttemptAt = new Date(Date.now() + retryDelayMs).toISOString();
+      await dependencies.retry(job, reason, nextAttemptAt, retryDelayMs);
+      return { status: 'RETRY_SCHEDULED', reason, retryDelayMs, nextAttemptAt };
+    }
     await dependencies.fail(job, reason);
     return { status: 'FAILED', reason };
   }
