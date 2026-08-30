@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+coverage
+.env
+.env.*
+supabase/.temp
+*.log
+.DS_Store
+.idea
+.vscode
