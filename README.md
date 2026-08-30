@@ -132,6 +132,15 @@ Service-role credentials and `GEMINI_API_KEY` must never be exposed to browser c
 
 `LOG_LEVEL` is optional for both API and Worker and defaults to `info`. Supported values are `debug`, `info`, `warn`, and `error`.
 
+Optional observability settings:
+
+```env
+# API: cap the safe dependency readiness check.
+READINESS_TIMEOUT_MS=3000
+# Worker: emit one lifecycle heartbeat log at this interval.
+WORKER_HEARTBEAT_INTERVAL_MS=60000
+```
+
 # Live Deployment
 
 The production deployment has three Railway services:
@@ -142,7 +151,7 @@ The production deployment has three Railway services:
 
 Verified health endpoint: <https://api-production-d637c.up.railway.app/health>
 
-The API listens on Railway's `PORT`. The web service is built with the public API URL, and the API's `CORS_ORIGIN` is configured for the deployed web origin. The worker has no public listener.
+The API listens on Railway's `PORT`. The web service is built with the public API URL, and the API's `CORS_ORIGIN` is configured for the deployed web origin. The worker has no public listener. Configure Railway's API healthcheck as `/health`; it is intentionally independent of Supabase so a short dependency outage does not restart a healthy API process. Use `/ready` as a diagnostic dependency check instead.
 
 # Database Model
 
@@ -260,11 +269,12 @@ Edits are validated by the shared Zod schema and are only permitted in `REVIEW_R
 
 # API Endpoints
 
-All endpoints except health require a verified Supabase Bearer token and a resolved organization membership.
+All endpoints except the public liveness and readiness checks require a verified Supabase Bearer token and a resolved organization membership.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Unauthenticated service health check. |
+| `GET` | `/ready` | Unauthenticated dependency readiness check; verifies safe PostgreSQL RPC reachability. |
 | `GET` | `/documents` | List documents in the caller's organization. |
 | `POST` | `/documents` | Validate, privately store, and queue one PDF. |
 | `GET` | `/documents/:id` | Return one same-tenant document and validated analysis. |
@@ -301,6 +311,14 @@ The API and Worker emit machine-readable JSON logs suitable for Railway, includi
 
 Logs intentionally exclude authorization headers, cookies, request bodies, PDF text, raw Gemini output, Gemini API keys, and Supabase credentials. This is structured application logging, not a full monitoring or observability platform. Deployments remain separate: redeploy API and Worker to enable the change; the Web service is unchanged.
 
+## Observability
+
+`/health` is a cheap API liveness check: it does not authenticate, call Supabase, or contact Gemini. `/ready` is a separate public dependency check that confirms API configuration was loaded at startup and performs a non-mutating, restricted PostgreSQL RPC with a short timeout. Its client response reports only `ok` or `failed`; detailed database errors stay out of responses.
+
+API JSON logs include request IDs, method, path, status code, and duration. Worker JSON logs include job/retry and Gemini fallback lifecycle categories, plus one configurable heartbeat per minute by default with safe worker state timestamps and the selected provider. Railway log filtering can use fields such as `service`, `requestId`, `errorCode`, `jobId`, `attempt`, and `nextAttemptAt`.
+
+There is no external metrics backend, tracing platform, alerting, or persisted metrics in this deployment.
+
 # Technical Decisions
 
 - pnpm workspaces keep web, API, worker, and shared contracts in one repository.
@@ -321,7 +339,7 @@ Logs intentionally exclude authorization headers, cookies, request bodies, PDF t
 - Gemini analysis is available optionally; deterministic analysis remains the default safe mode.
 - Gemini input is bounded by truncation; advanced chunking, RAG, and embeddings are not implemented.
 - Retry backoff is bounded and database-backed, but there is no dead-letter queue or distributed queue broker.
-- There is no advanced observability, monitoring, or operational alerting.
+- There is lightweight service readiness and heartbeat logging, but no external metrics, tracing, or alerting platform.
 - Durable request-level upload idempotency is not implemented.
 - Rate limits use in-memory counters. If the API runs multiple Railway replicas, each replica maintains separate counters; limits are not globally distributed.
 - Organization switching and multi-membership selection are not implemented.
