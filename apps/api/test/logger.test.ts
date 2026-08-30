@@ -20,6 +20,8 @@ const createDependencies = (lines: string[]): ApiDependencies => ({
   corsOrigin: 'http://localhost:3000',
   rateLimit: { windowMs: 60_000, maxRequests: 120, uploadMaxRequests: 10, mutationMaxRequests: 60 },
   logger: createLogger('api', 'info', (line) => lines.push(line)),
+  readiness: { checkDatabase: vi.fn(async () => {}) },
+  readinessTimeoutMs: 3000,
 });
 
 describe('API structured logging', () => {

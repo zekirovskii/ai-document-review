@@ -25,6 +25,7 @@ describe('getApiConfig', () => {
       rateLimitMaxRequests: 120,
       uploadRateLimitMaxRequests: 10,
       mutationRateLimitMaxRequests: 60,
+      readinessTimeoutMs: 3000,
       logLevel: 'info',
     });
   });
@@ -35,6 +36,14 @@ describe('getApiConfig', () => {
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     })).toThrow('RATE_LIMIT_MAX_REQUESTS must be a positive integer');
+  });
+
+  it('rejects an invalid readiness timeout', () => {
+    expect(() => getApiConfig({
+      READINESS_TIMEOUT_MS: '0',
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    })).toThrow('READINESS_TIMEOUT_MS must be a positive integer');
   });
 
   it('rejects an unsupported log level', () => {

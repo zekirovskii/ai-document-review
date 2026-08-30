@@ -35,6 +35,8 @@ const createDependencies = (): ApiDependencies => ({
     mutationMaxRequests: 60,
   },
   logger: createLogger(),
+  readiness: { checkDatabase: vi.fn(async () => {}) },
+  readinessTimeoutMs: 3000,
 });
 
 const rateLimitedDependencies = () => {
@@ -50,9 +52,35 @@ const rateLimitedDependencies = () => {
 
 describe('API foundation', () => {
   it('serves health without authentication', async () => {
-    const response = await request(createApp(createDependencies())).get('/health');
+    const dependencies = createDependencies();
+    const response = await request(createApp(dependencies)).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'ok' });
+    expect(dependencies.readiness.checkDatabase).not.toHaveBeenCalled();
+  });
+
+  it('serves readiness publicly when the database check succeeds', async () => {
+    const dependencies = createDependencies();
+    const response = await request(createApp(dependencies)).get('/ready');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: 'ready', checks: { database: 'ok' } });
+    expect(dependencies.readiness.checkDatabase).toHaveBeenCalledOnce();
+    expect(dependencies.authVerifier.verifyAccessToken).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe 503 readiness response when the database check fails', async () => {
+    const dependencies = createDependencies();
+    dependencies.readiness.checkDatabase = vi.fn(async () => { throw new Error('postgres://sensitive-host:5432 unavailable'); });
+
+    const response = await request(createApp(dependencies)).get('/ready');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ status: 'not_ready', checks: { database: 'failed' } });
+    expect(JSON.stringify(response.body)).not.toContain('sensitive-host');
+    expect(dependencies.logger.error).toHaveBeenCalledWith('API readiness check failed', expect.objectContaining({
+      errorCode: 'DATABASE_READINESS_FAILED',
+    }));
   });
 
   it('returns a generated request ID and reuses a valid incoming ID', async () => {
