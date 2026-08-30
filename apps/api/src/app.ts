@@ -10,6 +10,7 @@ import { authenticate, resolveOrganization } from './middleware.js';
 import { createApiRateLimiters, type RateLimitConfig } from './rate-limit.js';
 import { requestId, requestLogger } from './logging-middleware.js';
 import type { Logger } from './logger.js';
+import { withReadinessTimeout, type ReadinessChecker } from './readiness.js';
 import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext, UploadService } from './types.js';
 
 export interface ApiDependencies {
@@ -21,6 +22,8 @@ export interface ApiDependencies {
   corsOrigin: string;
   rateLimit: RateLimitConfig;
   logger: Logger;
+  readiness: ReadinessChecker;
+  readinessTimeoutMs: number;
 }
 
 type ContextResponse = Response<unknown, RequestContext>;
@@ -37,6 +40,20 @@ export const createApp = (dependencies: ApiDependencies): Express => {
   app.use(express.json());
 
   app.get('/health', (_request, response) => response.json({ status: 'ok' }));
+  app.get('/ready', async (_request, response: ContextResponse) => {
+    try {
+      await withReadinessTimeout(dependencies.readiness.checkDatabase(), dependencies.readinessTimeoutMs);
+      response.json({ status: 'ready', checks: { database: 'ok' } });
+    } catch (error) {
+      dependencies.logger.error('API readiness check failed', {
+        requestId: response.locals.requestId,
+        errorCode: error instanceof Error && error.message === 'READINESS_TIMEOUT'
+          ? 'READINESS_TIMEOUT'
+          : 'DATABASE_READINESS_FAILED',
+      });
+      response.status(503).json({ status: 'not_ready', checks: { database: 'failed' } });
+    }
+  });
 
   const rateLimiters = createApiRateLimiters(dependencies.rateLimit, dependencies.logger);
   const protectedRoute = (limiter: ReturnType<typeof createApiRateLimiters>['general']) => [

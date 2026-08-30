@@ -10,6 +10,7 @@ export interface ApiConfig {
   rateLimitMaxRequests: number;
   uploadRateLimitMaxRequests: number;
   mutationRateLimitMaxRequests: number;
+  readinessTimeoutMs: number;
   logLevel: LogLevel;
 }
 
@@ -28,6 +29,7 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
   const rateLimitMaxRequests = Number(environment.RATE_LIMIT_MAX_REQUESTS ?? 120);
   const uploadRateLimitMaxRequests = Number(environment.UPLOAD_RATE_LIMIT_MAX_REQUESTS ?? 10);
   const mutationRateLimitMaxRequests = Number(environment.MUTATION_RATE_LIMIT_MAX_REQUESTS ?? 60);
+  const readinessTimeoutMs = Number(environment.READINESS_TIMEOUT_MS ?? 3000);
   const logLevel = environment.LOG_LEVEL ?? 'info';
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error('PORT must be a positive integer');
@@ -38,6 +40,7 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
     ['RATE_LIMIT_MAX_REQUESTS', rateLimitMaxRequests],
     ['UPLOAD_RATE_LIMIT_MAX_REQUESTS', uploadRateLimitMaxRequests],
     ['MUTATION_RATE_LIMIT_MAX_REQUESTS', mutationRateLimitMaxRequests],
+    ['READINESS_TIMEOUT_MS', readinessTimeoutMs],
   ] as const) {
     if (!Number.isInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer`);
   }
@@ -53,6 +56,7 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
     rateLimitMaxRequests,
     uploadRateLimitMaxRequests,
     mutationRateLimitMaxRequests,
+    readinessTimeoutMs,
     logLevel,
   };
 };

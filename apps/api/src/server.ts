@@ -6,6 +6,7 @@ import { createUploadService } from './upload.js';
 import { createMembershipResolver } from './membership.js';
 import { createLogger } from './logger.js';
 import { createSupabaseAdminClient } from './supabase.js';
+import { createSupabaseReadinessChecker } from './readiness.js';
 
 const config = getApiConfig();
 const logger = createLogger('api', config.logLevel);
@@ -24,6 +25,8 @@ const app = createApp({
     mutationMaxRequests: config.mutationRateLimitMaxRequests,
   },
   logger,
+  readiness: createSupabaseReadinessChecker(supabase),
+  readinessTimeoutMs: config.readinessTimeoutMs,
 });
 
 app.listen(config.port, () => {

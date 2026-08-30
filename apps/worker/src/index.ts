@@ -3,9 +3,11 @@ import { createClient } from '@supabase/supabase-js';
 import { createAnalysisProvider } from './analysis.js';
 import { extractTextFromPdf } from './extraction.js';
 import { createLogger } from './logger.js';
+import { createWorkerHeartbeat } from './heartbeat.js';
 import { processAvailableJob } from './poller.js';
 import { processClaimedJob } from './processor.js';
 import { claimNextProcessingJob, retryProcessingJob } from './supabase-boundaries.js';
+import { isRetryableProcessingError } from './retry.js';
 
 const required = (key: string) => {
   const value = process.env[key];
@@ -25,7 +27,9 @@ const staleProcessingMs = positiveInteger('WORKER_STALE_PROCESSING_MS', 300000);
 const maxAttempts = positiveInteger('WORKER_MAX_ATTEMPTS', 3);
 const retryBaseDelayMs = positiveInteger('WORKER_RETRY_BASE_DELAY_MS', 5000);
 const retryMaxDelayMs = positiveInteger('WORKER_RETRY_MAX_DELAY_MS', 60000);
+const heartbeatIntervalMs = positiveInteger('WORKER_HEARTBEAT_INTERVAL_MS', 60000);
 const logger = createLogger('worker', process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined);
+const analysisProviderName = process.env.ANALYSIS_PROVIDER ?? 'deterministic';
 const analysisProvider = createAnalysisProvider({
   provider: process.env.ANALYSIS_PROVIDER,
   geminiApiKey: process.env.GEMINI_API_KEY,
@@ -41,6 +45,12 @@ const supabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } },
 );
 let lastRecoveryAt = 0;
+const heartbeat = createWorkerHeartbeat({
+  logger,
+  workerId,
+  analysisProvider: analysisProviderName,
+  intervalMs: heartbeatIntervalMs,
+});
 
 const jobContext = (job: { id: string; document_id: string; organization_id: string }) => ({
   workerId,
@@ -56,7 +66,8 @@ logger.info('Worker started', {
   maxAttempts,
   retryBaseDelayMs,
   retryMaxDelayMs,
-  analysisProvider: process.env.ANALYSIS_PROVIDER ?? 'deterministic',
+  heartbeatIntervalMs,
+  analysisProvider: analysisProviderName,
   ...(process.env.ANALYSIS_PROVIDER === 'gemini' ? { geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' } : {}),
 });
 
@@ -79,6 +90,7 @@ const processOne = async () => {
       },
     }, workerId),
     processJob: async (job) => {
+      heartbeat.recordClaimed();
       logger.info('Processing job started', jobContext(job));
       const result = await processClaimedJob(job, {
         loadDocument: async (claimedJob) => {
@@ -143,6 +155,7 @@ const processOne = async () => {
             retryDelayMs,
             nextAttemptAt,
             errorCode: reason,
+            retryable: true,
           });
         },
         fail: async (claimedJob, reason) => {
@@ -151,13 +164,16 @@ const processOne = async () => {
             p_reason: reason,
           });
           if (error) throw new Error('JOB_FAILURE_RECORDING_FAILED');
-          logger.warn('Processing job failed', { ...jobContext(claimedJob), errorCode: reason });
+          logger.warn('Processing job failed', { ...jobContext(claimedJob), errorCode: reason, retryable: isRetryableProcessingError(reason) });
         },
         maxAttempts,
         retryBaseDelayMs,
         retryMaxDelayMs,
       });
 
+      if (result.status === 'COMPLETED') heartbeat.recordCompleted();
+      if (result.status === 'RETRY_SCHEDULED') heartbeat.recordRetryScheduled();
+      if (result.status === 'FAILED') heartbeat.recordFailed();
       return result;
     },
   });
@@ -174,6 +190,7 @@ const run = async () => {
   }
 };
 
+heartbeat.start();
 run().catch((error) => {
   logger.error('Worker startup failed', { workerId, errorCode: error instanceof Error ? error.message : 'UNKNOWN' });
   process.exit(1);
