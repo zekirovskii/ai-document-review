@@ -15,7 +15,7 @@ const createDependencies = (overrides: Partial<ProcessingDependencies> = {}) => 
   loadDocument: vi.fn(async () => ({ storagePath: 'organization-1/document-1/file.pdf', originalFilename: 'file.pdf' })),
   downloadPdf: vi.fn(async () => Buffer.from('%PDF-1.4')),
   extractText: vi.fn(async () => text),
-  analyze: vi.fn(deterministicAnalysisProvider),
+  analyze: vi.fn(({ text: input }) => deterministicAnalysisProvider(input)),
   complete: vi.fn(async () => {}),
   fail: vi.fn(async () => {}),
   ...overrides,
