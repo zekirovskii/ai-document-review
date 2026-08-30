@@ -274,6 +274,10 @@ Worker tests cover deterministic analysis classification/language/risk output, m
 
 API tests also cover health-check bypass, general/upload/mutation limits, standardized `429` responses, proxy configuration, and preservation of unauthenticated request handling. Rate limiters are created per Express app instance so test state is isolated.
 
+# Continuous Integration
+
+GitHub Actions validates every push to `main` and every pull request targeting `main`. The validation-only workflow runs `lint`, `typecheck`, `test`, and `build` with Node.js 22, Corepack, and a frozen pnpm lockfile. It uses only fake public build-time placeholders for Next.js; it requires no production Supabase, Railway, or Gemini secrets. Railway deployment remains separate and is not performed by CI.
+
 # Technical Decisions
 
 - pnpm workspaces keep web, API, worker, and shared contracts in one repository.
