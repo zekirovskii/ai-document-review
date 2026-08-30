@@ -114,6 +114,9 @@ SUPABASE_SERVICE_ROLE_KEY=
 WORKER_ID=local-worker-1
 WORKER_POLL_INTERVAL_MS=2000
 WORKER_STALE_PROCESSING_MS=300000
+WORKER_MAX_ATTEMPTS=3
+WORKER_RETRY_BASE_DELAY_MS=5000
+WORKER_RETRY_MAX_DELAY_MS=60000
 LOG_LEVEL=info
 ANALYSIS_PROVIDER=deterministic
 GEMINI_API_KEY=
@@ -122,6 +125,8 @@ GEMINI_MAX_INPUT_CHARS=120000
 ```
 
 `ANALYSIS_PROVIDER` defaults to `deterministic`, which requires no Gemini configuration and keeps analysis local to application logic. Set it to `gemini` only in the worker after configuring a Gemini API key. `GEMINI_MAX_INPUT_CHARS` caps the extracted-text sent in one request; input is deterministically truncated to the first 120,000 characters, rather than chunked.
+
+Retry settings are Worker-only and default to three total attempts, a five-second base delay, and a 60-second delay cap.
 
 Service-role credentials and `GEMINI_API_KEY` must never be exposed to browser code or placed in `NEXT_PUBLIC_*` variables.
 
@@ -175,6 +180,14 @@ The upload HTTP request stores the PDF and creates a `QUEUED` document and proce
 The worker continuously polls the PostgreSQL-backed queue. `claim_next_processing_job` uses `FOR UPDATE SKIP LOCKED` to claim one queued job safely when multiple worker instances are present. It atomically moves both the job and document to processing and records claim metadata.
 
 Completion and failure are persisted through restricted database RPCs. A document-processing failure is handled per job so the worker continues polling. Jobs left in `PROCESSING` beyond `WORKER_STALE_PROCESSING_MS` (default five minutes) are marked `FAILED` by the stale-job recovery RPC.
+
+## Retry Strategy
+
+The worker reuses the existing processing job for bounded retries. Transient infrastructure failures currently classified as retryable are `STORAGE_DOWNLOAD_FAILED` and `ANALYSIS_PERSISTENCE_FAILED`; PDF extraction errors, no extractable text, and invalid analysis output fail immediately. Gemini request failures still use their existing deterministic fallback and do not trigger a retry when that fallback succeeds.
+
+Each atomic claim increments `attempts`. Before the configured maximum, retryable failures are returned to `QUEUED` with `next_attempt_at` set using deterministic exponential backoff: `min(WORKER_RETRY_BASE_DELAY_MS * 2^(attempt - 1), WORKER_RETRY_MAX_DELAY_MS)`. Claims continue to use `FOR UPDATE SKIP LOCKED` and only select scheduled jobs whose next attempt is due. At the maximum attempt, the existing final failure RPC marks the document/job `FAILED`. Retry scheduling records a safe `PROCESSING_RETRY_SCHEDULED` audit event.
+
+This is intentionally simple: there is no dead-letter queue, distributed queue broker, or jittered/adaptive backoff. Stale `PROCESSING` jobs continue to use the existing final stale-recovery failure path rather than retrying indefinitely.
 
 # PDF Extraction
 
@@ -307,7 +320,7 @@ Logs intentionally exclude authorization headers, cookies, request bodies, PDF t
 - OCR is not implemented; scanned/image-only PDFs fail with a controlled extraction error.
 - Gemini analysis is available optionally; deterministic analysis remains the default safe mode.
 - Gemini input is bounded by truncation; advanced chunking, RAG, and embeddings are not implemented.
-- There is no advanced retry/backoff or dead-letter queue.
+- Retry backoff is bounded and database-backed, but there is no dead-letter queue or distributed queue broker.
 - There is no advanced observability, monitoring, or operational alerting.
 - Durable request-level upload idempotency is not implemented.
 - Rate limits use in-memory counters. If the API runs multiple Railway replicas, each replica maintains separate counters; limits are not globally distributed.
@@ -318,6 +331,7 @@ Logs intentionally exclude authorization headers, cookies, request bodies, PDF t
 
 - Add OCR for scanned PDFs.
 - Add retry/backoff, dead-letter handling, and idempotent upload requests.
+- Add a dead-letter queue or broker if more advanced retry routing is required.
 - Use a shared store such as Redis if globally consistent limits are needed across multiple API replicas.
 - Add metrics and alerting.
 - Expand API, worker, and frontend test coverage.
