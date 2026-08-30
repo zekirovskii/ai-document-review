@@ -85,11 +85,15 @@ NODE_ENV=development
 API_PORT=3001
 MAX_PDF_SIZE_BYTES=10485760
 CORS_ORIGIN=http://localhost:3000,http://127.0.0.1:3000
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=120
+UPLOAD_RATE_LIMIT_MAX_REQUESTS=10
+MUTATION_RATE_LIMIT_MAX_REQUESTS=60
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-`PORT` takes precedence over `API_PORT`; Railway provides `PORT` automatically. `SUPABASE_ANON_KEY` is not used by the current API.
+`PORT` takes precedence over `API_PORT`; Railway provides `PORT` automatically. `SUPABASE_ANON_KEY` is not used by the current API. The rate-limit variables are server-only API settings and default to the values shown when omitted.
 
 Web (`apps/web/.env.local` locally; Railway Variables at build time in production):
 
@@ -232,6 +236,8 @@ Edits are validated by the shared Zod schema and are only permitted in `REVIEW_R
 - Browser clients have no broad direct table-write or Storage-object policies.
 - Storage paths are generated server-side from the resolved organization and generated document UUID.
 - PDF signature and size checks happen before Storage upload.
+- API routes use in-memory, IP-based rate limits as application-level abuse protection: 120 protected requests/minute, 10 PDF uploads/minute, and 60 review/approval mutations/minute by default. `/health` is not rate limited.
+- The API trusts exactly one Railway reverse-proxy hop so Express's standard client-IP handling is available to the rate limiter. Limit-exceeded requests return the standard `429` JSON error with `RATE_LIMITED`; no package-default HTML/text response is exposed.
 - `SECURITY DEFINER` functions use a fixed `search_path`; sensitive RPC execution is restricted to `service_role`.
 - API errors use controlled JSON responses, and cross-tenant lookups use `404`.
 
@@ -266,6 +272,8 @@ Vitest covers shared schema/status contracts, API behavior, and focused worker p
 
 Worker tests cover deterministic analysis classification/language/risk output, mocked Gemini structured responses and fallback behavior, PDF extraction wrapper outcomes, shared-schema rejection, success and failure persistence paths, atomic-claim RPC invocation, and polling resilience. Gemini tests mock the SDK boundary and never call the external API or require an API key. The web package has no dedicated test files yet; build, typecheck, and manual production flow verification cover its current core integration.
 
+API tests also cover health-check bypass, general/upload/mutation limits, standardized `429` responses, proxy configuration, and preservation of unauthenticated request handling. Rate limiters are created per Express app instance so test state is isolated.
+
 # Technical Decisions
 
 - pnpm workspaces keep web, API, worker, and shared contracts in one repository.
@@ -274,6 +282,7 @@ Worker tests cover deterministic analysis classification/language/risk output, m
 - PostgreSQL-backed jobs avoid an additional Redis dependency.
 - `FOR UPDATE SKIP LOCKED` provides concurrency-safe worker claims.
 - A deterministic analyzer establishes the required core flow; Gemini is an optional provider behind the same analysis boundary with deterministic fallback.
+- `express-rate-limit` provides lightweight per-instance, IP-based limits at the HTTP API boundary with modern `RateLimit` headers.
 - Shared Zod contracts validate analysis at worker, API, and persistence boundaries.
 - Database RPCs keep document/job/audit transitions atomic.
 - Private Storage is server-mediated rather than exposed to browser clients.
@@ -287,6 +296,7 @@ Worker tests cover deterministic analysis classification/language/risk output, m
 - There is no advanced retry/backoff or dead-letter queue.
 - There is no advanced observability, monitoring, or operational alerting.
 - Durable request-level upload idempotency is not implemented.
+- Rate limits use in-memory counters. If the API runs multiple Railway replicas, each replica maintains separate counters; limits are not globally distributed.
 - Organization switching and multi-membership selection are not implemented.
 - The web package does not yet have dedicated automated test files.
 
@@ -294,7 +304,7 @@ Worker tests cover deterministic analysis classification/language/risk output, m
 
 - Add OCR for scanned PDFs.
 - Add retry/backoff, dead-letter handling, and idempotent upload requests.
-- Add rate limiting.
+- Use a shared store such as Redis if globally consistent limits are needed across multiple API replicas.
 - Add CI/CD, structured logs, metrics, and alerting.
 - Expand API, worker, and frontend test coverage.
 
