@@ -85,6 +85,7 @@ NODE_ENV=development
 API_PORT=3001
 MAX_PDF_SIZE_BYTES=10485760
 CORS_ORIGIN=http://localhost:3000,http://127.0.0.1:3000
+LOG_LEVEL=info
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX_REQUESTS=120
 UPLOAD_RATE_LIMIT_MAX_REQUESTS=10
@@ -113,6 +114,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 WORKER_ID=local-worker-1
 WORKER_POLL_INTERVAL_MS=2000
 WORKER_STALE_PROCESSING_MS=300000
+LOG_LEVEL=info
 ANALYSIS_PROVIDER=deterministic
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash
@@ -122,6 +124,8 @@ GEMINI_MAX_INPUT_CHARS=120000
 `ANALYSIS_PROVIDER` defaults to `deterministic`, which requires no Gemini configuration and keeps analysis local to application logic. Set it to `gemini` only in the worker after configuring a Gemini API key. `GEMINI_MAX_INPUT_CHARS` caps the extracted-text sent in one request; input is deterministically truncated to the first 120,000 characters, rather than chunked.
 
 Service-role credentials and `GEMINI_API_KEY` must never be exposed to browser code or placed in `NEXT_PUBLIC_*` variables.
+
+`LOG_LEVEL` is optional for both API and Worker and defaults to `info`. Supported values are `debug`, `info`, `warn`, and `error`.
 
 # Live Deployment
 
@@ -278,6 +282,12 @@ API tests also cover health-check bypass, general/upload/mutation limits, standa
 
 GitHub Actions validates every push to `main` and every pull request targeting `main`. The validation-only workflow runs `lint`, `typecheck`, `test`, and `build` with Node.js 22, Corepack, and a frozen pnpm lockfile. It uses only fake public build-time placeholders for Next.js; it requires no production Supabase, Railway, or Gemini secrets. Railway deployment remains separate and is not performed by CI.
 
+# Structured Logging
+
+The API and Worker emit machine-readable JSON logs suitable for Railway, including timestamp, level, service, and message. API logs assign or reuse `x-request-id`, return it to callers, and record safe request completion fields. Worker logs record concise job lifecycle context, such as worker/job/document IDs and analysis-provider outcomes. `LOG_LEVEL=info` is the default; set it on the API and Worker Railway services if a different level is needed.
+
+Logs intentionally exclude authorization headers, cookies, request bodies, PDF text, raw Gemini output, Gemini API keys, and Supabase credentials. This is structured application logging, not a full monitoring or observability platform. Deployments remain separate: redeploy API and Worker to enable the change; the Web service is unchanged.
+
 # Technical Decisions
 
 - pnpm workspaces keep web, API, worker, and shared contracts in one repository.
@@ -309,7 +319,7 @@ GitHub Actions validates every push to `main` and every pull request targeting `
 - Add OCR for scanned PDFs.
 - Add retry/backoff, dead-letter handling, and idempotent upload requests.
 - Use a shared store such as Redis if globally consistent limits are needed across multiple API replicas.
-- Add CI/CD, structured logs, metrics, and alerting.
+- Add metrics and alerting.
 - Expand API, worker, and frontend test coverage.
 
 # Demo Users
