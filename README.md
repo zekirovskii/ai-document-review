@@ -1,8 +1,8 @@
 # Project Overview
 
-GOATECH AI Document Review Platform is a multi-tenant PDF review application. Users authenticate with Supabase, upload a PDF for their organization, and receive an asynchronously generated, deterministic structured analysis. A human reviewer can correct the analysis and approve the document.
+GOATECH AI Document Review Platform is a multi-tenant PDF review application. Users authenticate with Supabase, upload a PDF for their organization, and receive an asynchronously generated structured analysis. A human reviewer can correct the analysis and approve the document.
 
-The core implementation intentionally uses rule-based analysis rather than a real LLM.
+The core implementation uses local deterministic, rule-based analysis. An optional Gemini provider is available as a bonus integration and always falls back to the deterministic provider when its request or output fails validation.
 
 # Architecture
 
@@ -27,7 +27,7 @@ Upload → QUEUED document + job
                            │
               text PDF extraction (pdf-parse)
                            │
-             deterministic rule-based analysis
+       deterministic analysis (default) or Gemini
                            │ Zod validation
                            ▼
                     REVIEW_REQUIRED
@@ -109,9 +109,15 @@ SUPABASE_SERVICE_ROLE_KEY=
 WORKER_ID=local-worker-1
 WORKER_POLL_INTERVAL_MS=2000
 WORKER_STALE_PROCESSING_MS=300000
+ANALYSIS_PROVIDER=deterministic
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_INPUT_CHARS=120000
 ```
 
-Service-role credentials must never be exposed to browser code or placed in `NEXT_PUBLIC_*` variables.
+`ANALYSIS_PROVIDER` defaults to `deterministic`, which requires no Gemini configuration and keeps analysis local to application logic. Set it to `gemini` only in the worker after configuring a Gemini API key. `GEMINI_MAX_INPUT_CHARS` caps the extracted-text sent in one request; input is deterministically truncated to the first 120,000 characters, rather than chunked.
+
+Service-role credentials and `GEMINI_API_KEY` must never be exposed to browser code or placed in `NEXT_PUBLIC_*` variables.
 
 # Live Deployment
 
@@ -182,7 +188,26 @@ The required analysis contract is shared by API and worker code:
 }
 ```
 
-The current worker uses a deterministic rule-based analyzer for document type, language, risk keywords, summary, and flags. Its output is always validated by the shared Zod schema before persistence. Invalid output is not persisted and processing fails safely.
+The core `DeterministicAnalysisProvider` uses local rules for document type, language, risk keywords, summary, and flags. It remains the default provider and is always available.
+
+The optional bonus `GeminiAnalysisProvider` uses Google's official `@google/genai` Node.js SDK with the stable `gemini-2.5-flash` default model. This model supports structured output and is a practical price/performance choice for text analysis. The provider requests JSON structured output with the exact required fields, parses it, and then validates it with the same shared `analysisOutputSchema`; model structured output does not replace application validation. The worker validates the final provider result again immediately before persistence.
+
+When `ANALYSIS_PROVIDER=gemini`, a Gemini request, parsing, or Zod-validation failure logs only a high-level warning and runs the deterministic provider instead. A successful fallback proceeds normally to `REVIEW_REQUIRED`; only a failure on both paths follows the existing controlled failure flow. There is no unbounded Gemini retry behavior.
+
+Gemini mode sends only the bounded extracted document text to Google's Gemini API. It does not send Supabase credentials, auth tokens, organization membership data, storage URLs, or raw document/model output to logs. Use deterministic mode where document text must remain within application-controlled processing.
+
+## Enabling Gemini on Railway
+
+Do not add Gemini variables to the Web or API Railway services. Add these variables only to the Worker service, then redeploy that Worker service:
+
+```env
+ANALYSIS_PROVIDER=gemini
+GEMINI_API_KEY=<secret>
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_INPUT_CHARS=120000
+```
+
+The Worker fails startup with a clear configuration error if Gemini mode is selected without `GEMINI_API_KEY`. Unknown provider values also fail startup. No database migration is needed because Gemini uses the existing analysis contract and tables.
 
 # Human Review & Approval
 
@@ -202,6 +227,7 @@ Edits are validated by the shared Zod schema and are only permitted in `REVIEW_R
 - The backend verifies Bearer tokens independently.
 - PDFs live in the private `documents` Supabase Storage bucket; there are no public document URLs.
 - Service-role keys exist only in API/worker server configuration.
+- `GEMINI_API_KEY` is Worker-only and never enters browser configuration or logs.
 - RLS and explicit API organization filters provide defense in depth.
 - Browser clients have no broad direct table-write or Storage-object policies.
 - Storage paths are generated server-side from the resolved organization and generated document UUID.
@@ -238,7 +264,7 @@ Metadata records identifiers and limited operational details such as file size, 
 
 Vitest covers shared schema/status contracts, API behavior, and focused worker pipeline boundaries. The API suite covers health, CORS preflight, missing and invalid authentication, membership denial, organization-scoped listing and document lookup, PDF validation, and queue creation. It also verifies Railway `PORT` precedence.
 
-Worker tests cover deterministic analysis classification/language/risk output, PDF extraction wrapper outcomes, shared-schema rejection, success and failure persistence paths, atomic-claim RPC invocation, and polling resilience. The current suite contains 3 shared-schema tests, 11 API tests, and 26 worker tests. The web package has no dedicated test files yet; build, typecheck, and manual production flow verification cover its current core integration.
+Worker tests cover deterministic analysis classification/language/risk output, mocked Gemini structured responses and fallback behavior, PDF extraction wrapper outcomes, shared-schema rejection, success and failure persistence paths, atomic-claim RPC invocation, and polling resilience. Gemini tests mock the SDK boundary and never call the external API or require an API key. The web package has no dedicated test files yet; build, typecheck, and manual production flow verification cover its current core integration.
 
 # Technical Decisions
 
@@ -247,7 +273,7 @@ Worker tests cover deterministic analysis classification/language/risk output, P
 - Supabase supplies the required PostgreSQL, Auth, and private Storage services.
 - PostgreSQL-backed jobs avoid an additional Redis dependency.
 - `FOR UPDATE SKIP LOCKED` provides concurrency-safe worker claims.
-- A deterministic analyzer establishes the required core flow; an LLM is a future enhancement.
+- A deterministic analyzer establishes the required core flow; Gemini is an optional provider behind the same analysis boundary with deterministic fallback.
 - Shared Zod contracts validate analysis at worker, API, and persistence boundaries.
 - Database RPCs keep document/job/audit transitions atomic.
 - Private Storage is server-mediated rather than exposed to browser clients.
@@ -256,8 +282,8 @@ Worker tests cover deterministic analysis classification/language/risk output, P
 # Known Limitations
 
 - OCR is not implemented; scanned/image-only PDFs fail with a controlled extraction error.
-- A real LLM/Gemini provider is not integrated.
-- Analysis is intentionally simple and deterministic.
+- Gemini analysis is available optionally; deterministic analysis remains the default safe mode.
+- Gemini input is bounded by truncation; advanced chunking, RAG, and embeddings are not implemented.
 - There is no advanced retry/backoff or dead-letter queue.
 - There is no advanced observability, monitoring, or operational alerting.
 - Durable request-level upload idempotency is not implemented.
@@ -266,7 +292,6 @@ Worker tests cover deterministic analysis classification/language/risk output, P
 
 # Production Improvements
 
-- Add a Gemini or other LLM provider behind the existing analysis boundary.
 - Add OCR for scanned PDFs.
 - Add retry/backoff, dead-letter handling, and idempotent upload requests.
 - Add rate limiting.
