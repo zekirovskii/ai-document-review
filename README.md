@@ -378,6 +378,8 @@ docker run --rm -p 3000:3000 -e PORT=3000 goatech-web
 
 The Web image receives only `NEXT_PUBLIC_*` configuration at build time. API and Worker receive Supabase and Gemini credentials only at runtime. Docker is a portable option; the validated live deployment remains the three-service Railway deployment.
 
+All three images were validated locally with Docker Desktop: each production build completed, the API `/health` endpoint returned `200` with fake runtime credentials, the Worker started against an unreachable local-only fake endpoint, and the Web `/login` route returned `200` with fake public configuration.
+
 # Structured Logging
 
 The API and Worker emit machine-readable JSON logs suitable for Railway, including timestamp, level, service, and message. API logs assign or reuse `x-request-id`, return it to callers, and record safe request completion fields. Worker logs record concise job lifecycle context, such as worker/job/document IDs and analysis-provider outcomes. `LOG_LEVEL=info` is the default; set it on the API and Worker Railway services if a different level is needed.
