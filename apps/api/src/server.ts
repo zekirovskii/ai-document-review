@@ -4,9 +4,11 @@ import { getApiConfig } from './config.js';
 import { createDocumentsService } from './documents.js';
 import { createUploadService } from './upload.js';
 import { createMembershipResolver } from './membership.js';
+import { createLogger } from './logger.js';
 import { createSupabaseAdminClient } from './supabase.js';
 
 const config = getApiConfig();
+const logger = createLogger('api', config.logLevel);
 const supabase = createSupabaseAdminClient(config);
 const app = createApp({
   authVerifier: createSupabaseAuthVerifier(supabase),
@@ -21,8 +23,9 @@ const app = createApp({
     uploadMaxRequests: config.uploadRateLimitMaxRequests,
     mutationMaxRequests: config.mutationRateLimitMaxRequests,
   },
+  logger,
 });
 
 app.listen(config.port, () => {
-  console.log(`API listening on port ${config.port}`);
+  logger.info('API server started', { port: config.port });
 });

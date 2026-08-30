@@ -1,6 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { analysisOutputSchema, type AnalysisOutput } from '@goatech/shared';
 
+import type { Logger } from './logger.js';
+
 export const DEFAULT_ANALYSIS_PROVIDER = 'deterministic';
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 // This is deliberately far below Gemini 2.5 Flash's context window to bound cost and request size.
@@ -35,6 +37,7 @@ export interface AnalysisProviderConfig {
   geminiApiKey?: string;
   geminiModel?: string;
   geminiMaxInputChars?: number;
+  logger?: Logger;
 }
 
 const analysisJsonSchema = {
@@ -132,6 +135,7 @@ class GeminiFallbackAnalysisProvider implements AnalysisProvider {
   constructor(
     private readonly gemini: AnalysisProvider,
     private readonly deterministic: AnalysisProvider,
+    private readonly logger?: Logger,
   ) {}
 
   async analyze(input: AnalysisInput): Promise<AnalysisOutput> {
@@ -142,7 +146,7 @@ class GeminiFallbackAnalysisProvider implements AnalysisProvider {
         && ['GEMINI_RESPONSE_PARSE_FAILED', 'GEMINI_RESPONSE_VALIDATION_FAILED'].includes(error.message)
         ? error.message
         : 'GEMINI_REQUEST_FAILED';
-      console.warn(`Gemini analysis failed (${category}); using deterministic fallback`);
+      this.logger?.warn('Gemini analysis fallback used', { analysisProvider: 'gemini', errorCode: category });
       return this.deterministic.analyze(input);
     }
   }
@@ -169,5 +173,5 @@ export const createAnalysisProvider = (
     config.geminiModel || DEFAULT_GEMINI_MODEL,
     maxInputChars,
   );
-  return new GeminiFallbackAnalysisProvider(gemini, deterministic);
+  return new GeminiFallbackAnalysisProvider(gemini, deterministic, config.logger);
 };

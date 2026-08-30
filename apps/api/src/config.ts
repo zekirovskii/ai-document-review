@@ -1,3 +1,5 @@
+import { isLogLevel, type LogLevel } from './logger.js';
+
 export interface ApiConfig {
   port: number;
   supabaseUrl: string;
@@ -8,6 +10,7 @@ export interface ApiConfig {
   rateLimitMaxRequests: number;
   uploadRateLimitMaxRequests: number;
   mutationRateLimitMaxRequests: number;
+  logLevel: LogLevel;
 }
 
 const required = (environment: NodeJS.ProcessEnv, key: string): string => {
@@ -25,6 +28,7 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
   const rateLimitMaxRequests = Number(environment.RATE_LIMIT_MAX_REQUESTS ?? 120);
   const uploadRateLimitMaxRequests = Number(environment.UPLOAD_RATE_LIMIT_MAX_REQUESTS ?? 10);
   const mutationRateLimitMaxRequests = Number(environment.MUTATION_RATE_LIMIT_MAX_REQUESTS ?? 60);
+  const logLevel = environment.LOG_LEVEL ?? 'info';
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error('PORT must be a positive integer');
   }
@@ -37,6 +41,7 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
   ] as const) {
     if (!Number.isInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer`);
   }
+  if (!isLogLevel(logLevel)) throw new Error('LOG_LEVEL must be debug, info, warn, or error');
 
   return {
     port,
@@ -48,5 +53,6 @@ export const getApiConfig = (environment: NodeJS.ProcessEnv = process.env): ApiC
     rateLimitMaxRequests,
     uploadRateLimitMaxRequests,
     mutationRateLimitMaxRequests,
+    logLevel,
   };
 };

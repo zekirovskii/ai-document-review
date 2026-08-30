@@ -6,6 +6,7 @@ export interface AuthenticatedUser {
 }
 
 export interface RequestContext {
+  requestId?: string;
   user?: AuthenticatedUser;
   organizationId?: OrganizationId;
 }

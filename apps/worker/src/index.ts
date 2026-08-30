@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 import { createAnalysisProvider } from './analysis.js';
 import { extractTextFromPdf } from './extraction.js';
+import { createLogger } from './logger.js';
 import { processAvailableJob } from './poller.js';
 import { processClaimedJob } from './processor.js';
 import { claimNextProcessingJob } from './supabase-boundaries.js';
@@ -21,6 +22,7 @@ const positiveInteger = (key: string, fallback: number) => {
 const interval = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 2000);
 const workerId = process.env.WORKER_ID ?? 'local-worker-1';
 const staleProcessingMs = positiveInteger('WORKER_STALE_PROCESSING_MS', 300000);
+const logger = createLogger('worker', process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined);
 const analysisProvider = createAnalysisProvider({
   provider: process.env.ANALYSIS_PROVIDER,
   geminiApiKey: process.env.GEMINI_API_KEY,
@@ -28,14 +30,29 @@ const analysisProvider = createAnalysisProvider({
   geminiMaxInputChars: process.env.GEMINI_MAX_INPUT_CHARS === undefined
     ? undefined
     : positiveInteger('GEMINI_MAX_INPUT_CHARS', 120000),
+  logger,
 });
-console.info(`Analysis provider: ${process.env.ANALYSIS_PROVIDER ?? 'deterministic'}${process.env.ANALYSIS_PROVIDER === 'gemini' ? ` (${process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'})` : ''}`);
 const supabase = createClient(
   required('SUPABASE_URL'),
   required('SUPABASE_SERVICE_ROLE_KEY'),
   { auth: { autoRefreshToken: false, persistSession: false } },
 );
 let lastRecoveryAt = 0;
+
+const jobContext = (job: { id: string; document_id: string; organization_id: string }) => ({
+  workerId,
+  jobId: job.id,
+  documentId: job.document_id,
+  organizationId: job.organization_id,
+});
+
+logger.info('Worker started', {
+  workerId,
+  pollIntervalMs: interval,
+  staleProcessingMs,
+  analysisProvider: process.env.ANALYSIS_PROVIDER ?? 'deterministic',
+  ...(process.env.ANALYSIS_PROVIDER === 'gemini' ? { geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' } : {}),
+});
 
 const processOne = async () => {
   const now = Date.now();
@@ -44,7 +61,7 @@ const processOne = async () => {
       p_claimed_before: new Date(now - staleProcessingMs).toISOString(),
     });
     if (recoveryError) throw new Error('STALE_JOB_RECOVERY_FAILED');
-    if (reapedCount > 0) console.warn(`Marked ${reapedCount} stale processing job(s) as failed`);
+    if (reapedCount > 0) logger.warn('Stale processing jobs marked failed', { workerId, reapedCount });
     lastRecoveryAt = now;
   }
 
@@ -56,7 +73,7 @@ const processOne = async () => {
       },
     }, workerId),
     processJob: async (job) => {
-      console.info(`Processing job ${job.id}`);
+      logger.info('Processing job started', jobContext(job));
       const result = await processClaimedJob(job, {
         loadDocument: async (claimedJob) => {
           const { data: document, error } = await supabase
@@ -65,15 +82,35 @@ const processOne = async () => {
             .eq('id', claimedJob.document_id)
             .eq('organization_id', claimedJob.organization_id)
             .single();
-          if (error || !document) return null;
+          if (error || !document) {
+            logger.warn('Document metadata load failed', { ...jobContext(claimedJob), errorCode: 'STORAGE_DOWNLOAD_FAILED' });
+            return null;
+          }
           return { storagePath: document.storage_path, originalFilename: document.original_filename };
         },
         downloadPdf: async (storagePath) => {
           const { data: blob, error } = await supabase.storage.from('documents').download(storagePath);
-          return error || !blob ? null : Buffer.from(await blob.arrayBuffer());
+          if (error || !blob) {
+            logger.warn('Document storage download failed', { ...jobContext(job), errorCode: 'STORAGE_DOWNLOAD_FAILED' });
+            return null;
+          }
+          logger.info('Document storage download completed', jobContext(job));
+          return Buffer.from(await blob.arrayBuffer());
         },
-        extractText: extractTextFromPdf,
-        analyze: (input) => analysisProvider.analyze(input),
+        extractText: async (pdf) => {
+          try {
+            const text = await extractTextFromPdf(pdf);
+            logger.info('Document text extraction completed', jobContext(job));
+            return text;
+          } catch (error) {
+            logger.warn('Document text extraction failed', { ...jobContext(job), errorCode: error instanceof Error ? error.message : 'PDF_TEXT_EXTRACTION_FAILED' });
+            throw error;
+          }
+        },
+        analyze: async (input) => {
+          logger.info('Document analysis started', { ...jobContext(job), analysisProvider: process.env.ANALYSIS_PROVIDER ?? 'deterministic' });
+          return analysisProvider.analyze(input);
+        },
         complete: async (claimedJob, analysis) => {
           const { error } = await supabase.rpc('complete_processing_job', {
             p_job_id: claimedJob.id,
@@ -84,6 +121,7 @@ const processOne = async () => {
             p_flags: analysis.flags,
           });
           if (error) throw new Error('ANALYSIS_PERSISTENCE_FAILED');
+          logger.info('Document analysis validated and job completed', { ...jobContext(claimedJob), analysisProvider: process.env.ANALYSIS_PROVIDER ?? 'deterministic' });
         },
         fail: async (claimedJob, reason) => {
           const { error } = await supabase.rpc('fail_processing_job', {
@@ -91,11 +129,10 @@ const processOne = async () => {
             p_reason: reason,
           });
           if (error) throw new Error('JOB_FAILURE_RECORDING_FAILED');
+          logger.warn('Processing job failed', { ...jobContext(claimedJob), errorCode: reason });
         },
       });
 
-      if (result.status === 'COMPLETED') console.info(`Completed processing job ${job.id}`);
-      else console.warn(`Failed processing job ${job.id}: ${result.reason}`);
       return result;
     },
   });
@@ -106,13 +143,13 @@ const run = async () => {
     try {
       if (!await processOne()) await new Promise((resolve) => setTimeout(resolve, interval));
     } catch (error) {
-      console.error('Worker poll failed', error instanceof Error ? error.message : 'unknown');
+      logger.error('Worker poll failed', { workerId, errorCode: error instanceof Error ? error.message : 'UNKNOWN' });
       await new Promise((resolve) => setTimeout(resolve, interval));
     }
   }
 };
 
 run().catch((error) => {
-  console.error('Worker startup failed', error instanceof Error ? error.message : 'unknown');
+  logger.error('Worker startup failed', { workerId, errorCode: error instanceof Error ? error.message : 'UNKNOWN' });
   process.exit(1);
 });

@@ -8,6 +8,8 @@ import { analysisOutputSchema } from '@goatech/shared';
 import { newUpload, validatePdf } from './upload.js';
 import { authenticate, resolveOrganization } from './middleware.js';
 import { createApiRateLimiters, type RateLimitConfig } from './rate-limit.js';
+import { requestId, requestLogger } from './logging-middleware.js';
+import type { Logger } from './logger.js';
 import type { AuthVerifier, DocumentsService, MembershipResolver, RequestContext, UploadService } from './types.js';
 
 export interface ApiDependencies {
@@ -18,6 +20,7 @@ export interface ApiDependencies {
   maxPdfSizeBytes: number;
   corsOrigin: string;
   rateLimit: RateLimitConfig;
+  logger: Logger;
 }
 
 type ContextResponse = Response<unknown, RequestContext>;
@@ -28,12 +31,14 @@ export const createApp = (dependencies: ApiDependencies): Express => {
   // makes Express's standard request.ip (and the limiter) use the client address.
   app.set('trust proxy', 1);
   const corsOrigins = dependencies.corsOrigin.split(',').map((origin) => origin.trim()).filter(Boolean);
+  app.use(requestId);
+  app.use(requestLogger(dependencies.logger));
   app.use(cors({ origin: corsOrigins }));
   app.use(express.json());
 
   app.get('/health', (_request, response) => response.json({ status: 'ok' }));
 
-  const rateLimiters = createApiRateLimiters(dependencies.rateLimit);
+  const rateLimiters = createApiRateLimiters(dependencies.rateLimit, dependencies.logger);
   const protectedRoute = (limiter: ReturnType<typeof createApiRateLimiters>['general']) => [
     authenticate(dependencies.authVerifier),
     limiter,
@@ -51,6 +56,7 @@ export const createApp = (dependencies: ApiDependencies): Express => {
       await dependencies.uploadService.upload(storagePath, request.file.buffer);
       try {
         const document = await dependencies.uploadService.createQueued({ documentId, organizationId, userId: user.userId, originalFilename: request.file.originalname, storagePath, fileSize: request.file.size });
+        dependencies.logger.info('Document upload queued', { requestId: response.locals.requestId, organizationId, documentId, fileSize: request.file.size });
         response.status(201).json({ document });
       } catch (error) {
         await dependencies.uploadService.remove(storagePath);
@@ -95,6 +101,6 @@ export const createApp = (dependencies: ApiDependencies): Express => {
     if (error instanceof multer.MulterError) next(new ApiError(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400, error.code === 'LIMIT_FILE_SIZE' ? 'FILE_TOO_LARGE' : 'INVALID_MULTIPART', 'Invalid upload request'));
     else next(error);
   });
-  app.use(errorHandler);
+  app.use(errorHandler(dependencies.logger));
   return app;
 };
