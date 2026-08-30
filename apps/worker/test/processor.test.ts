@@ -8,6 +8,7 @@ const job: ClaimedProcessingJob = {
   id: 'job-1',
   document_id: 'document-1',
   organization_id: 'organization-1',
+  attempts: 1,
 };
 const text = 'This agreement describes a contract between parties with a termination clause.';
 
@@ -17,7 +18,11 @@ const createDependencies = (overrides: Partial<ProcessingDependencies> = {}) => 
   extractText: vi.fn(async () => text),
   analyze: vi.fn(({ text: input }) => deterministicAnalysisProvider(input)),
   complete: vi.fn(async () => {}),
+  retry: vi.fn(async () => {}),
   fail: vi.fn(async () => {}),
+  maxAttempts: 3,
+  retryBaseDelayMs: 100,
+  retryMaxDelayMs: 1000,
   ...overrides,
 }) satisfies ProcessingDependencies;
 
@@ -35,12 +40,13 @@ describe('processClaimedJob', () => {
     expect(dependencies.fail).not.toHaveBeenCalled();
   });
 
-  it('records a controlled failure when private Storage download fails', async () => {
+  it('schedules a retry when private Storage download fails', async () => {
     const dependencies = createDependencies({ downloadPdf: vi.fn(async () => null) });
 
-    await expect(processClaimedJob(job, dependencies)).resolves.toEqual({ status: 'FAILED', reason: 'STORAGE_DOWNLOAD_FAILED' });
+    await expect(processClaimedJob(job, dependencies)).resolves.toMatchObject({ status: 'RETRY_SCHEDULED', reason: 'STORAGE_DOWNLOAD_FAILED', retryDelayMs: 100 });
     expect(dependencies.complete).not.toHaveBeenCalled();
-    expect(dependencies.fail).toHaveBeenCalledWith(job, 'STORAGE_DOWNLOAD_FAILED');
+    expect(dependencies.fail).not.toHaveBeenCalled();
+    expect(dependencies.retry).toHaveBeenCalledWith(job, 'STORAGE_DOWNLOAD_FAILED', expect.any(String), 100);
   });
 
   it('does not analyze or complete when extraction fails', async () => {
@@ -77,16 +83,26 @@ describe('processClaimedJob', () => {
     expect(dependencies.fail).toHaveBeenCalledWith(job, 'ANALYSIS_VALIDATION_FAILED');
   });
 
-  it('records a failure when completion persistence fails', async () => {
+  it('schedules a retry when completion persistence fails', async () => {
     const dependencies = createDependencies({ complete: vi.fn(async () => { throw new Error('ANALYSIS_PERSISTENCE_FAILED'); }) });
 
-    await expect(processClaimedJob(job, dependencies)).resolves.toEqual({ status: 'FAILED', reason: 'ANALYSIS_PERSISTENCE_FAILED' });
-    expect(dependencies.fail).toHaveBeenCalledWith(job, 'ANALYSIS_PERSISTENCE_FAILED');
+    await expect(processClaimedJob(job, dependencies)).resolves.toMatchObject({ status: 'RETRY_SCHEDULED', reason: 'ANALYSIS_PERSISTENCE_FAILED' });
+    expect(dependencies.fail).not.toHaveBeenCalled();
+    expect(dependencies.retry).toHaveBeenCalledWith(job, 'ANALYSIS_PERSISTENCE_FAILED', expect.any(String), 100);
+  });
+
+  it('permanently fails a retryable error after the maximum attempt', async () => {
+    const dependencies = createDependencies({ downloadPdf: vi.fn(async () => null) });
+    const finalAttempt = { ...job, attempts: 3 };
+
+    await expect(processClaimedJob(finalAttempt, dependencies)).resolves.toEqual({ status: 'FAILED', reason: 'STORAGE_DOWNLOAD_FAILED' });
+    expect(dependencies.retry).not.toHaveBeenCalled();
+    expect(dependencies.fail).toHaveBeenCalledWith(finalAttempt, 'STORAGE_DOWNLOAD_FAILED');
   });
 
   it('does not swallow a failure-persistence error', async () => {
     const dependencies = createDependencies({
-      downloadPdf: vi.fn(async () => null),
+      extractText: vi.fn(async () => { throw new Error('PDF_TEXT_EXTRACTION_FAILED'); }),
       fail: vi.fn(async () => { throw new Error('JOB_FAILURE_RECORDING_FAILED'); }),
     });
 

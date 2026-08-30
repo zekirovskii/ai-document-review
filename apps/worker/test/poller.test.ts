@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { processAvailableJob } from '../src/poller';
 import type { ClaimedProcessingJob } from '../src/processor';
 
-const firstJob: ClaimedProcessingJob = { id: 'job-1', document_id: 'document-1', organization_id: 'organization-1' };
-const secondJob: ClaimedProcessingJob = { id: 'job-2', document_id: 'document-2', organization_id: 'organization-1' };
+const firstJob: ClaimedProcessingJob = { id: 'job-1', document_id: 'document-1', organization_id: 'organization-1', attempts: 1 };
+const secondJob: ClaimedProcessingJob = { id: 'job-2', document_id: 'document-2', organization_id: 'organization-1', attempts: 1 };
 
 describe('processAvailableJob', () => {
   it('calls the claim boundary and exits cleanly when no job is available', async () => {
