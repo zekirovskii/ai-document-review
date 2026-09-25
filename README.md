@@ -1,6 +1,6 @@
 # Project Overview
 
-GOATECH AI Document Review Platform is a multi-tenant PDF review application. Users authenticate with Supabase, upload a PDF for their organization, and receive an asynchronously generated structured analysis. A human reviewer can correct the analysis and approve the document.
+AI Document Review Platform is a multi-tenant PDF review application. Users authenticate with Supabase, upload a PDF for their organization, and receive an asynchronously generated structured analysis. A human reviewer can correct the analysis and approve the document.
 
 The core implementation uses local deterministic, rule-based analysis. An optional Gemini provider is available as a bonus integration and always falls back to the deterministic provider when its request or output fails validation.
 
